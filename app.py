@@ -30,7 +30,7 @@ IGNORED_LINE_PREFIXES = (
 
 def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
     items: list[ReceiptItem] = []
-    line_regex = re.compile(r"^(?P<name>.+?)\s+(?P<price>-?\d{1,4}(?:[.,]\d{2}))\s*[A-Za-z]?$")
+    price_regex = re.compile(r"-?\d{1,4}(?:[.,]\d{2})")
 
     for raw_line in receipt_text.splitlines():
         line = raw_line.strip()
@@ -41,12 +41,13 @@ def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
         if lowered.startswith(IGNORED_LINE_PREFIXES):
             continue
 
-        match = line_regex.match(line)
-        if not match:
+        price_matches = list(price_regex.finditer(line))
+        if not price_matches:
             continue
 
-        name = match.group("name").strip("- ")
-        price = float(match.group("price").replace(",", "."))
+        match = price_matches[-1]
+        name = line[: match.start()].strip("- ")
+        price = float(match.group(0).replace(",", "."))
         if name and price > 0:
             items.append(ReceiptItem(name=name, price=price))
 
