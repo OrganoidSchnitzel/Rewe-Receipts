@@ -10,11 +10,17 @@
   {% if items %}
   <form action="/send-to-spliit" method="post">
     <input type="hidden" name="item_count" value="{{ items|length }}" />
+    <input type="hidden" name="receipt_id" value="{{ receipt_id }}" />
     <ul>
       {% for item in items %}
       <li>
         <label>
-          <input type="checkbox" name="selected_indices" value="{{ loop.index0 }}" />
+          <input
+            type="checkbox"
+            name="selected_indices"
+            value="{{ loop.index0 }}"
+            {% if loop.index0 in preselected_indices %}checked{% endif %}
+          />
           {{ item.name }} — €{{ "%.2f"|format(item.price) }}
         </label>
         <input type="hidden" name="item_name_{{ loop.index0 }}" value="{{ item.name }}" />
@@ -29,5 +35,6 @@
   {% endif %}
 
   <p><a href="/">Back</a></p>
+  <p><a href="/receipts">Processed receipts</a></p>
 </body>
 </html>
