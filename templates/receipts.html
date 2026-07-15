@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Processed receipts</title>
+</head>
+<body>
+  <h1>Processed receipts</h1>
+
+  {% if receipts %}
+    <ul>
+      {% for receipt in receipts %}
+      <li>
+        <a href="/receipts/{{ receipt.id }}/edit">
+          {{ receipt.processed_at }} — {{ receipt.selected_total }} EUR
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No processed receipts yet.</p>
+  {% endif %}
+
+  <p><a href="/">Back</a></p>
+</body>
+</html>
