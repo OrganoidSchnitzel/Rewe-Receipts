@@ -44,6 +44,8 @@ IGNORED_LINE_KEYWORDS = (
     "stop",
     "aktion",
     "rabatt",
+    "mit diesem",
+    "hast du",
 )
 
 
