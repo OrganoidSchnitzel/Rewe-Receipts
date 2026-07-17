@@ -1,26 +1,27 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Processed receipts</title>
-</head>
-<body>
-  <h1>Processed receipts</h1>
+{% extends "base.html" %}
 
-  {% if receipts %}
-    <ul>
-      {% for receipt in receipts %}
-      <li>
-        <a href="/receipts/{{ receipt.id }}/edit">
-          {{ receipt.processed_at }} — {{ receipt.selected_total }} EUR
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p>No processed receipts yet.</p>
-  {% endif %}
+{% block title %}Processed receipts{% endblock %}
 
-  <p><a href="/">Back</a></p>
-</body>
-</html>
+{% block content %}
+  <section class="card">
+    <h1>Processed receipts</h1>
+
+    {% if receipts %}
+      <ul class="list-links">
+        {% for receipt in receipts %}
+        <li>
+          <a href="/receipts/{{ receipt.id }}/edit">
+            {{ receipt.processed_at }} — {{ "%.2f"|format(receipt.selected_total) }} EUR
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No processed receipts yet.</p>
+    {% endif %}
+
+    <div class="actions">
+      <a href="/">Back</a>
+    </div>
+  </section>
+{% endblock %}

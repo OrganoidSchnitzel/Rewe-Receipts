@@ -1,23 +1,23 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>REWE Receipts → Spliit</title>
-</head>
-<body>
-  <h1>REWE Receipts → Spliit</h1>
-  <p><a href="/receipts">View processed receipts</a></p>
+{% extends "base.html" %}
 
-  <form action="/parse" method="post" enctype="multipart/form-data">
-    <p>
-      <label for="receipt_pdf">Receipt PDF (optional if text already exists):</label><br />
-      <input id="receipt_pdf" name="receipt_pdf" type="file" accept="application/pdf" />
-    </p>
-    <p>
-      <label for="receipt_text">Receipt text (from paperless OCR):</label><br />
-      <textarea id="receipt_text" name="receipt_text" rows="20" cols="90"></textarea>
-    </p>
-    <button type="submit">Parse receipt</button>
-  </form>
-</body>
-</html>
+{% block title %}REWE Receipts → Spliit{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <h1>REWE Receipts → Spliit</h1>
+    <p class="muted">Upload a PDF or paste OCR text to detect items for splitting.</p>
+    <p><a href="/receipts">View processed receipts</a></p>
+
+    <form action="/parse" method="post" enctype="multipart/form-data">
+      <p>
+        <label for="receipt_pdf">Receipt PDF</label>
+        <input id="receipt_pdf" name="receipt_pdf" type="file" accept="application/pdf" />
+      </p>
+      <p>
+        <label for="receipt_text">Receipt text (paperless OCR)</label>
+        <textarea id="receipt_text" name="receipt_text"></textarea>
+      </p>
+      <button type="submit">Parse receipt</button>
+    </form>
+  </section>
+{% endblock %}
