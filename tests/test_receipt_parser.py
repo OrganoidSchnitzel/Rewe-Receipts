@@ -29,6 +29,25 @@ SUMME 4,48
         self.assertEqual("BROT", items[1].name)
         self.assertEqual(2.49, items[1].price)
 
+    def test_parse_receipt_text_ignores_payment_and_bonus_lines(self) -> None:
+        receipt = """
+RFW SALAMI FENCH 3,59 A
+KERRYGOLD CHEDD. 1,59 A
+Geg. VISA EUR 13,27
+TSE-Start: 2026-07-17T19:13: 43,00
+Mit diesem Einkauf hast du 0,50
+Eingesetztes Bonus-Guthaben: 3,04
+SUMME 5,18
+        """
+
+        items = parse_receipt_text(receipt)
+
+        self.assertEqual(2, len(items))
+        self.assertEqual("RFW SALAMI FENCH", items[0].name)
+        self.assertEqual(3.59, items[0].price)
+        self.assertEqual("KERRYGOLD CHEDD.", items[1].name)
+        self.assertEqual(1.59, items[1].price)
+
     def test_calculate_total_rounds_to_two_decimals(self) -> None:
         items = [ReceiptItem(name="A", price=1.115), ReceiptItem(name="B", price=2.225)]
 

@@ -1,31 +1,32 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Transfer result</title>
-</head>
-<body>
-  <h1>Transfer result</h1>
+{% extends "base.html" %}
 
-  <h2>Selected items</h2>
-  {% if selected_items %}
-    <ul>
-      {% for item in selected_items %}
-      <li>{{ item.name }} — €{{ "%.2f"|format(item.price) }}</li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p>No items selected.</p>
-  {% endif %}
+{% block title %}Transfer result{% endblock %}
 
-  <p><strong>Total:</strong> €{{ "%.2f"|format(total) }}</p>
-  <p>{{ result.message }}</p>
+{% block content %}
+  <section class="card">
+    <h1>Transfer result</h1>
 
-  <h3>Payload preview</h3>
-  <pre>{{ result.payload | tojson(indent=2) }}</pre>
+    <h2>Selected items</h2>
+    {% if selected_items %}
+      <ul class="item-list">
+        {% for item in selected_items %}
+        <li>{{ item.name }} <strong>€{{ "%.2f"|format(item.price) }}</strong></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No items selected.</p>
+    {% endif %}
 
-  <p><a href="/receipts/{{ receipt_id }}/edit">Edit this processed receipt</a></p>
-  <p><a href="/receipts">View all processed receipts</a></p>
-  <p><a href="/">Process another receipt</a></p>
-</body>
-</html>
+    <p><strong>Total:</strong> €{{ "%.2f"|format(total) }}</p>
+    <p class="muted">{{ result.message }}</p>
+
+    <h3>Payload preview</h3>
+    <pre>{{ result.payload | tojson(indent=2) }}</pre>
+
+    <nav class="actions">
+      <a href="/receipts/{{ receipt_id }}/edit">Edit this processed receipt</a>
+      <a href="/receipts">View all processed receipts</a>
+      <a href="/">Process another receipt</a>
+    </nav>
+  </section>
+{% endblock %}

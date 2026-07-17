@@ -31,6 +31,42 @@ IGNORED_LINE_PREFIXES = (
     "wechselgeld",
 )
 
+IGNORED_LINE_KEYWORDS = (
+    "guthaben",
+    "bonus",
+    "visa",
+    "mastercard",
+    "karte",
+    "zahlung",
+    "eingesetztes",
+    "tse-",
+    "start",
+    "stop",
+    "aktion",
+    "rabatt",
+    "mit diesem",
+    "hast du",
+)
+
+
+def is_probable_item_name(name: str, lowered_line: str) -> bool:
+    lowered_name = name.lower()
+
+    if any(keyword in lowered_line for keyword in IGNORED_LINE_KEYWORDS):
+        return False
+
+    if re.search(r"\d{4}[-/.]\d{2}[-/.]\d{2}", name) or re.search(r"\d{1,2}:\d{2}", name):
+        return False
+
+    if re.match(r"^[a-z]=", lowered_name):
+        return False
+
+    letters = sum(char.isalpha() for char in name)
+    if letters < 3:
+        return False
+
+    return True
+
 
 
 def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
@@ -53,7 +89,7 @@ def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
         match = price_matches[-1]
         name = line[: match.start()].strip("- ")
         price = float(match.group(0).replace(",", "."))
-        if name and price > 0:
+        if name and price > 0 and is_probable_item_name(name=name, lowered_line=lowered):
             items.append(ReceiptItem(name=name, price=price))
 
     return items
