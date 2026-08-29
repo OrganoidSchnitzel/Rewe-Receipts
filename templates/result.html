@@ -5,6 +5,10 @@
 {% block content %}
   <section class="card">
     <h1>Transfer result</h1>
+    
+    {% if store %}
+      <p class="muted">Store: <strong>{{ store|upper }}</strong></p>
+    {% endif %}
 
     <h2>Selected items</h2>
     {% if selected_items %}

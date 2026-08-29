@@ -5,11 +5,16 @@
 {% block content %}
   <section class="card">
     <h1>Select items to transfer to Spliit</h1>
+    
+    {% if store %}
+      <p class="muted">Store: <strong>{{ store|upper }}</strong></p>
+    {% endif %}
 
     {% if items %}
     <form action="/send-to-spliit" method="post">
       <input type="hidden" name="item_count" value="{{ items|length }}" />
       <input type="hidden" name="receipt_id" value="{{ receipt_id }}" />
+      <input type="hidden" name="store" value="{{ store|default('') }}" />
       <ul class="item-list">
         {% for item in items %}
         <li>

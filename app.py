@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from dateutil import parser as date_parser
 from flask import Flask, abort, render_template, request
 from pypdf import PdfReader
 
@@ -68,8 +69,26 @@ def is_probable_item_name(name: str, lowered_line: str) -> bool:
     return True
 
 
+def parse_lidl_receipt(receipt_data: dict[str, Any]) -> list[ReceiptItem]:
+    """Parse receipt data from Lidl Plus API."""
+    items: list[ReceiptItem] = []
+    
+    for line_item in receipt_data.get("lineItems", []):
+        name = line_item.get("name", "").strip()
+        price_value = line_item.get("totalPrice", {}).get("value", 0)
+        
+        if not name or not isinstance(price_value, (int, float)):
+            continue
+        
+        price = float(price_value) / 100  # Lidl API returns prices in cents
+        if price > 0 and is_probable_item_name(name=name, lowered_line=name.lower()):
+            items.append(ReceiptItem(name=name, price=round(price, 2)))
+    
+    return items
 
-def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
+
+def parse_rewe_receipt(receipt_text: str) -> list[ReceiptItem]:
+    """Parse receipt text from REWE (paperless-ngx OCR)."""
     items: list[ReceiptItem] = []
     price_regex = re.compile(r"-?\d{1,4}(?:[.,]\d{2})")
 
@@ -93,6 +112,11 @@ def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
             items.append(ReceiptItem(name=name, price=price))
 
     return items
+
+
+def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
+    """Legacy function for backward compatibility."""
+    return parse_rewe_receipt(receipt_text)
 
 
 
@@ -139,7 +163,7 @@ def save_processed_receipts(receipts: list[dict[str, Any]]) -> None:
 
 
 def upsert_processed_receipt(
-    all_items: list[ReceiptItem], selected_indices: list[int], receipt_id: str | None = None
+    all_items: list[ReceiptItem], selected_indices: list[int], receipt_id: str | None = None, store: str = ""
 ) -> str:
     receipts = load_processed_receipts()
     record_id = receipt_id or uuid.uuid4().hex
@@ -148,6 +172,7 @@ def upsert_processed_receipt(
     record = {
         "id": record_id,
         "processed_at": datetime.now(timezone.utc).isoformat(),
+        "store": store,
         "all_items": [{"name": item.name, "price": item.price} for item in all_items],
         "selected_indices": selected_indices,
         "selected_total": calculate_total(selected_items),
@@ -173,14 +198,15 @@ def get_processed_receipt(receipt_id: str) -> dict[str, Any] | None:
 
 
 
-def send_amount_to_spliit(total: float, selected_items: list[ReceiptItem]) -> dict[str, Any]:
+def send_amount_to_spliit(total: float, selected_items: list[ReceiptItem], store: str = "") -> dict[str, Any]:
     spliit_url = os.getenv("SPLIIT_API_URL")
     spliit_api_key = os.getenv("SPLIIT_API_KEY")
 
+    store_suffix = f" ({store})" if store else ""
     payload = {
         "amount": total,
         "currency": "EUR",
-        "description": f"REWE receipt split ({len(selected_items)} items)",
+        "description": f"Receipt split{store_suffix} ({len(selected_items)} items)",
         "items": [{"name": item.name, "price": item.price} for item in selected_items],
     }
 
@@ -202,10 +228,11 @@ def send_amount_to_spliit(total: float, selected_items: list[ReceiptItem]) -> di
 
 
 
-def parse_items_from_form() -> tuple[list[ReceiptItem], list[int]]:
+def parse_items_from_form() -> tuple[list[ReceiptItem], list[int], str]:
     selected_indices = [int(i) for i in request.form.getlist("selected_indices") if i.isdigit()]
     selected_index_set = set(selected_indices)
     item_count = int(request.form.get("item_count", "0"))
+    store = request.form.get("store", "").strip()
 
     items: list[ReceiptItem] = []
     kept_selected: list[int] = []
@@ -226,7 +253,7 @@ def parse_items_from_form() -> tuple[list[ReceiptItem], list[int]]:
         if index in selected_index_set:
             kept_selected.append(actual_index)
 
-    return items, kept_selected
+    return items, kept_selected, store
 
 
 @app.get("/")
@@ -256,6 +283,7 @@ def edit_receipt(receipt_id: str) -> str:
         for index in receipt.get("selected_indices", [])
         if isinstance(index, int) and 0 <= index < len(items)
     ]
+    store = receipt.get("store", "")
 
     return render_template(
         "select_items.html",
@@ -263,6 +291,7 @@ def edit_receipt(receipt_id: str) -> str:
         original_text="",
         preselected_indices=set(selected_indices),
         receipt_id=receipt_id,
+        store=store,
     )
 
 
@@ -270,29 +299,45 @@ def edit_receipt(receipt_id: str) -> str:
 def parse_receipt() -> str:
     receipt_text = request.form.get("receipt_text", "")
     receipt_pdf = request.files.get("receipt_pdf")
+    store_source = request.form.get("store_source", "").strip().lower()
 
     if receipt_pdf and receipt_pdf.filename:
         receipt_text = extract_text_from_pdf(receipt_pdf.stream)
+        if not store_source:
+            store_source = "rewe"  # Default to REWE for PDF uploads
+    
+    items: list[ReceiptItem] = []
+    if store_source == "lidl":
+        try:
+            receipt_data = json.loads(receipt_text)
+            items = parse_lidl_receipt(receipt_data)
+        except (json.JSONDecodeError, KeyError):
+            items = parse_rewe_receipt(receipt_text)
+            store_source = "rewe"
+    else:
+        items = parse_rewe_receipt(receipt_text)
+        if not store_source:
+            store_source = "rewe"
 
-    items = parse_receipt_text(receipt_text)
     return render_template(
         "select_items.html",
         items=items,
         original_text=receipt_text,
         preselected_indices=set(),
         receipt_id="",
+        store=store_source,
     )
 
 
 @app.post("/send-to-spliit")
 def send_to_spliit() -> str:
-    all_items, selected_indices = parse_items_from_form()
+    all_items, selected_indices, store = parse_items_from_form()
     selected_set = set(selected_indices)
     selected_items = [item for idx, item in enumerate(all_items) if idx in selected_set]
     total = calculate_total(selected_items)
 
     try:
-        result = send_amount_to_spliit(total=total, selected_items=selected_items)
+        result = send_amount_to_spliit(total=total, selected_items=selected_items, store=store)
     except requests.RequestException as exc:
         result = {
             "sent": False,
@@ -300,7 +345,7 @@ def send_to_spliit() -> str:
             "payload": {
                 "amount": total,
                 "currency": "EUR",
-                "description": f"REWE receipt split ({len(selected_items)} items)",
+                "description": f"Receipt split ({len(selected_items)} items)",
                 "items": [{"name": item.name, "price": item.price} for item in selected_items],
             },
         }
@@ -309,6 +354,7 @@ def send_to_spliit() -> str:
         all_items=all_items,
         selected_indices=selected_indices,
         receipt_id=request.form.get("receipt_id") or None,
+        store=store,
     )
 
     return render_template(
@@ -317,6 +363,7 @@ def send_to_spliit() -> str:
         total=total,
         result=result,
         receipt_id=receipt_id,
+        store=store,
     )
 
 

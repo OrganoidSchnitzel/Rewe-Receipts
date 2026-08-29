@@ -1,12 +1,12 @@
-# Rewe-Receipts
+# Receipt Importer for Lidl & REWE
 
-A minimal web app to process REWE receipts from paperless-ngx and transfer selected totals to Spliit.
+A minimal web app to process receipts from **Lidl** (via API) and **REWE** (via paperless-ngx OCR), then transfer selected items to Spliit.
 
 ## Features
 
-- Accept receipt input as either:
-  - PDF file (text extracted via `pypdf`), or
-  - plain text (paperless OCR text)
+- Support for two store sources:
+  - **Lidl**: Parse JSON data from Lidl Plus API
+  - **REWE**: Parse OCR text from paperless-ngx or PDF uploads
 - Parse item lines and prices
 - Select receipt items in a simple UI
 - Sum selected items
@@ -18,26 +18,26 @@ A minimal web app to process REWE receipts from paperless-ngx and transfer selec
 1. Build the image:
 
 ```bash
-docker build -t rewe-receipts:latest .
+docker build -t receipt-importer:latest .
 ```
 
 2. Create a local data directory (for processed receipts history):
 
 ```bash
-mkdir -p ./rewe-receipts-data
+mkdir -p ./receipt-importer-data
 ```
 
 3. Run the container:
 
 ```bash
 docker run -d \
-  --name rewe-receipts \
+  --name receipt-importer \
   -p 8000:8000 \
-  -v "$(pwd)/rewe-receipts-data:/app/data" \
+  -v "$(pwd)/receipt-importer-data:/app/data" \
   -e RECEIPTS_DB_PATH="/app/data/processed_receipts.json" \
   -e SPLIIT_API_URL="https://your-spliit-endpoint" \
   -e SPLIIT_API_KEY="optional-api-key" \
-  rewe-receipts:latest
+  receipt-importer:latest
 ```
 
 4. Open `http://localhost:8000`.
@@ -48,7 +48,7 @@ docker run -d \
 2. Add a new container from your built image/tag.
 3. Set port mapping: `8000` (container) -> `8000` (host).
 4. Add a persistent path mapping:
-   - Host path: e.g. `/mnt/user/appdata/rewe-receipts`
+   - Host path: e.g. `/mnt/user/appdata/receipt-importer`
    - Container path: `/app/data`
 5. Add environment variables:
    - `RECEIPTS_DB_PATH=/app/data/processed_receipts.json`
@@ -58,11 +58,27 @@ docker run -d \
 
 ## How to use
 
-1. Paste OCR text from paperless, or upload a receipt PDF.
-2. Click **Parse receipt**.
-3. Select items to include.
-4. Click **Transfer selected amount**.
-5. Open **View processed receipts** to reopen any previous receipt and edit selection.
+### For REWE receipts (paperless-ngx)
+
+1. Export the OCR text from paperless-ngx for your REWE receipt PDF
+2. Select "REWE (paperless-ngx / PDF)" as the store source
+3. Paste the OCR text into the text area (or upload the PDF directly)
+4. Click **Parse receipt**
+5. Select items to include
+6. Click **Transfer selected amount**
+
+### For Lidl receipts (Lidl Plus API)
+
+1. Use the Lidl Plus API to fetch your receipt data (JSON format)
+2. Select "Lidl (Plus API JSON)" as the store source
+3. Paste the JSON response into the text area
+4. Click **Parse receipt**
+5. Select items to include
+6. Click **Transfer selected amount**
+
+### View processed receipts
+
+Open **View processed receipts** to reopen any previous receipt and edit selection.
 
 ## Local run
 
@@ -78,3 +94,36 @@ python app.py
 ```bash
 python -m unittest discover -s tests -p 'test*.py'
 ```
+
+## Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `RECEIPTS_DB_PATH` | Path to store processed receipts JSON file | No (default: `/app/data/processed_receipts.json`) |
+| `SPLIIT_API_URL` | URL of your Spliit API endpoint | No (if not set, no transfer is made) |
+| `SPLIIT_API_KEY` | API key for Spliit (if required) | No |
+
+## Example Lidl API Response Format
+
+The app expects Lidl receipt data in this format:
+
+```json
+{
+  "lineItems": [
+    {
+      "name": "Bananas",
+      "totalPrice": {
+        "value": 199
+      }
+    },
+    {
+      "name": "Bread",
+      "totalPrice": {
+        "value": 249
+      }
+    }
+  ]
+}
+```
+
+Note: Prices from Lidl API are expected in cents (will be divided by 100).

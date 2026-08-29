@@ -12,6 +12,9 @@
         <li>
           <a href="/receipts/{{ receipt.id }}/edit">
             {{ receipt.processed_at }} — {{ "%.2f"|format(receipt.selected_total) }} EUR
+            {% if receipt.store %}
+              <span class="muted">({{ receipt.store|upper }})</span>
+            {% endif %}
           </a>
         </li>
         {% endfor %}
