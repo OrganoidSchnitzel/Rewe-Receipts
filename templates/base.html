@@ -3,11 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{% block title %}REWE Receipts → Spliit{% endblock %}</title>
+  <title>{% block title %}Receipt Importer{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('index') }}">🧾 Receipt Importer</a>
+    <nav>
+      <a href="{{ url_for('index') }}">Receipts</a>
+      <a href="{{ url_for('manual_form') }}">Manual add</a>
+      <form action="{{ url_for('manual_poll') }}" method="post" class="inline">
+        <button type="submit" class="link-btn">Poll Paperless</button>
+      </form>
+    </nav>
+  </header>
   <main class="page">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash">
+          {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
     {% block content %}{% endblock %}
   </main>
 </body>

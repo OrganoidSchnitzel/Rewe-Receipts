@@ -1,4 +1,3 @@
-```
 # Python
 __pycache__/
 *.py[cod]
@@ -83,4 +82,8 @@ dmypy.json
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```
+
+# App data (SQLite DB, stored receipt PDFs, Lidl token)
+data/
+*.db
+*.sqlite3
