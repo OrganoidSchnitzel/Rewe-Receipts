@@ -1,18 +1,21 @@
 # Receipt Importer service.
 #
-# This service must share a Docker network with your existing Paperless-ngx and
-# Spliit containers so it can reach them by container name. Two ways to wire it:
+# Reaching Paperless-ngx and Spliit: pick ONE of the two options below.
 #
-#  A) Add this `receipt-importer` service block to the SAME docker-compose.yml
-#     that already defines paperless + spliit (recommended). Then you can use
-#     internal URLs, e.g. PAPERLESS_URL=http://paperless-webserver:8000 and
-#     SPLIIT_URL=http://spliit:3000.
+#  A) Simplest — use their LAN IPs (already set in .env: PAPERLESS_URL /
+#     SPLIIT_URL point at 192.168.178.100). Works regardless of which Docker
+#     network anything is on. This is what's active below (`network_mode: bridge`,
+#     no `networks:` block).
 #
-#  B) Keep it standalone (this file) and attach it to the existing external
-#     network (see the `networks` block at the bottom). Then the LAN IPs in
-#     .env.example (192.168.178.100:*) also work.
+#  B) Reach them by container name instead — find the network they're actually
+#     on with `docker network ls` + `docker inspect <container> | grep -A3 Networks`,
+#     then replace the `network_mode: bridge` line with:
 #
-# On Unraid, the volume maps to appdata, matching the existing convention.
+#       networks:
+#         - receipts-net
+#
+#     ...and uncomment the `networks:` block at the bottom, setting `name:` to
+#     that real network name.
 
 services:
   receipt-importer:
@@ -20,21 +23,17 @@ services:
     # image: receipt-importer:latest   # or pull/push a prebuilt image
     container_name: receipt-importer
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "8000:8000"
     env_file:
       - .env
     volumes:
-      # Unraid appdata convention; adjust host path to your setup.
-      - /mnt/user/appdata/receipt-importer:/app/data
-    networks:
-      - receipts-net
+      # Adjust to your appdata path; matches the `data/` dir already next to this repo.
+      - ../data:/app/data
 
-# Option B: attach to the network your Paperless/Spliit stack already uses.
-# Find it with: docker network ls  (and `docker inspect <container>` to confirm).
-# Replace `paperless_default` with that network's real name and set
-# `external: true` so this compose file joins it instead of creating a new one.
-networks:
-  receipts-net:
-    name: paperless_default
-    external: true
+# Option B (see comment above): uncomment and set the real network name.
+# networks:
+#   receipts-net:
+#     name: <your-paperless-or-spliit-network-name>
+#     external: true
