@@ -60,8 +60,7 @@ def _trpc_query(procedure: str, payload: dict[str, Any]) -> Any:
     response = requests.get(
         url, params=params, headers=_headers(), timeout=config.HTTP_TIMEOUT
     )
-    response.raise_for_status()
-    return _unwrap(response.json())
+    return _unwrap(response)
 
 
 def _trpc_mutation(procedure: str, payload: dict[str, Any]) -> Any:
@@ -71,19 +70,31 @@ def _trpc_mutation(procedure: str, payload: dict[str, Any]) -> Any:
         url, data=json.dumps({"json": payload}), headers=_headers(),
         timeout=config.HTTP_TIMEOUT,
     )
-    response.raise_for_status()
-    return _unwrap(response.json())
+    return _unwrap(response)
 
 
-def _unwrap(body: Any) -> Any:
-    """Unwrap a tRPC/superjson response body to its data payload.
+def _unwrap(response: requests.Response) -> Any:
+    """Unwrap a tRPC/superjson HTTP response to its data payload.
 
-    Handles both batched (list) and non-batched (dict) response shapes.
+    Handles both batched (list) and non-batched (dict) response shapes. On a
+    non-2xx status, tRPC still returns a JSON body describing exactly what
+    failed (e.g. a Zod validation message) — surface that instead of the bare
+    "400 Client Error" requests would otherwise raise, which discards it.
     """
+    try:
+        body = response.json()
+    except ValueError:
+        response.raise_for_status()
+        raise SpliitError(f"Non-JSON response from Spliit: {response.text[:500]!r}")
+
     if isinstance(body, list):
         body = body[0] if body else {}
     if isinstance(body, dict) and "error" in body:
-        raise SpliitError(str(body["error"]))
+        error = body["error"]
+        message = error.get("json", {}).get("message") if isinstance(error, dict) else error
+        raise SpliitError(f"Spliit rejected the request: {message or error}")
+
+    response.raise_for_status()
     try:
         return body["result"]["data"]["json"]
     except (KeyError, TypeError) as exc:
@@ -178,10 +189,12 @@ def build_expense_payload(
         "notes": notes,
         "recurrenceRule": "NONE",
     }
+    # participantId is optional in Spliit's schema (identifies "you" for the
+    # UI's "who am I" convenience) — omit the key rather than sending an
+    # explicit null, since an optional (non-nullable) Zod field rejects null.
     return {
         "groupId": group_id,
         "expenseFormValues": expense_form_values,
-        "participantId": None,
     }
 
 

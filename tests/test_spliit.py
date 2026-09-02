@@ -48,7 +48,10 @@ class SpliitPayloadTests(unittest.TestCase):
     def test_top_level_shape(self) -> None:
         payload = self._payload()
         self.assertEqual("grp1", payload["groupId"])
-        self.assertIsNone(payload["participantId"])
+        # participantId is optional in Spliit's schema and must be OMITTED
+        # rather than sent as null: an optional (non-nullable) Zod field
+        # rejects an explicit null, which previously caused a 400.
+        self.assertNotIn("participantId", payload)
         self.assertEqual("REWE 2026-09-02", payload["expenseFormValues"]["title"])
 
     def test_rejects_non_positive_amount(self) -> None:
