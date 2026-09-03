@@ -1,324 +1,273 @@
+"""Flask web app: entrypoint.
+
+Ties together ingestion (Paperless webhook + polling), the extraction pipeline,
+the review UI, and Spliit expense creation. Kept as the container's single
+process; the poller runs as a daemon thread.
+"""
 from __future__ import annotations
 
 import json
-import os
-import re
-import uuid
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+import logging
 
-import requests
-from flask import Flask, abort, render_template, request
-from pypdf import PdfReader
+from flask import (
+    Flask,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
+
+from receipts import config, db, extraction, ingest, scheduler, spliit
+from receipts.extraction import normalize_line
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.secret_key = "receipt-importer"  # only used for flash messages (LAN-only)
 
 
-@dataclass
-class ReceiptItem:
-    name: str
-    price: float
+# --- helpers -----------------------------------------------------------------
 
-
-IGNORED_LINE_PREFIXES = (
-    "summe",
-    "gesamt",
-    "mwst",
-    "ec-zahlung",
-    "bar",
-    "wechselgeld",
-)
-
-IGNORED_LINE_KEYWORDS = (
-    "guthaben",
-    "bonus",
-    "visa",
-    "mastercard",
-    "karte",
-    "zahlung",
-    "eingesetztes",
-    "tse-",
-    "start",
-    "stop",
-    "aktion",
-    "rabatt",
-    "mit diesem",
-    "hast du",
-)
-
-
-def is_probable_item_name(name: str, lowered_line: str) -> bool:
-    lowered_name = name.lower()
-
-    if any(keyword in lowered_line for keyword in IGNORED_LINE_KEYWORDS):
-        return False
-
-    if re.search(r"\d{4}[-/.]\d{2}[-/.]\d{2}", name) or re.search(r"\d{1,2}:\d{2}", name):
-        return False
-
-    if re.match(r"^[a-z]=", lowered_name):
-        return False
-
-    letters = sum(char.isalpha() for char in name)
-    if letters < 3:
-        return False
-
-    return True
-
-
-
-def parse_receipt_text(receipt_text: str) -> list[ReceiptItem]:
-    items: list[ReceiptItem] = []
-    price_regex = re.compile(r"-?\d{1,4}(?:[.,]\d{2})")
-
-    for raw_line in receipt_text.splitlines():
-        line = raw_line.strip()
-        if not line:
+def _parse_items_from_form() -> list[dict]:
+    """Read the edited item rows submitted from the detail view."""
+    count = int(request.form.get("item_count", "0") or 0)
+    selected = set(request.form.getlist("included"))
+    items: list[dict] = []
+    for index in range(count):
+        name = request.form.get(f"name_{index}", "").strip()
+        if not name:
             continue
-
-        lowered = line.lower()
-        if lowered.startswith(IGNORED_LINE_PREFIXES):
-            continue
-
-        price_matches = list(price_regex.finditer(line))
-        if not price_matches:
-            continue
-
-        match = price_matches[-1]
-        name = line[: match.start()].strip("- ")
-        price = float(match.group(0).replace(",", "."))
-        if name and price > 0 and is_probable_item_name(name=name, lowered_line=lowered):
-            items.append(ReceiptItem(name=name, price=price))
-
+        try:
+            quantity = float(request.form.get(f"quantity_{index}", "1") or 1)
+        except ValueError:
+            quantity = 1.0
+        try:
+            total_price = float(request.form.get(f"total_price_{index}", "0") or 0)
+        except ValueError:
+            total_price = 0.0
+        unit_price = round(total_price / quantity, 2) if quantity else total_price
+        items.append(
+            {
+                "name": name,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "total_price": total_price,
+                "included": str(index) in selected,
+                "raw_line": request.form.get(f"raw_line_{index}", "") or None,
+                "source_method": request.form.get(f"source_method_{index}", "") or "",
+            }
+        )
     return items
 
 
-
-def extract_text_from_pdf(file_obj: Any) -> str:
-    reader = PdfReader(file_obj)
-    pages = [page.extract_text() or "" for page in reader.pages]
-    return "\n".join(pages)
-
-
-
-def calculate_total(items: list[ReceiptItem]) -> float:
-    return round(sum(item.price for item in items), 2)
-
-
-
-def receipts_db_path() -> Path:
-    configured = os.getenv("RECEIPTS_DB_PATH", "/app/data/processed_receipts.json")
-    return Path(configured)
-
-
-
-def load_processed_receipts() -> list[dict[str, Any]]:
-    path = receipts_db_path()
-    if not path.exists():
-        return []
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-
-    if not isinstance(data, list):
-        return []
-
-    return data
-
-
-
-def save_processed_receipts(receipts: list[dict[str, Any]]) -> None:
-    path = receipts_db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipts, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-
-def upsert_processed_receipt(
-    all_items: list[ReceiptItem], selected_indices: list[int], receipt_id: str | None = None
-) -> str:
-    receipts = load_processed_receipts()
-    record_id = receipt_id or uuid.uuid4().hex
-    selected_items = [item for index, item in enumerate(all_items) if index in set(selected_indices)]
-
-    record = {
-        "id": record_id,
-        "processed_at": datetime.now(timezone.utc).isoformat(),
-        "all_items": [{"name": item.name, "price": item.price} for item in all_items],
-        "selected_indices": selected_indices,
-        "selected_total": calculate_total(selected_items),
-    }
-
-    for index, existing in enumerate(receipts):
-        if existing.get("id") == record_id:
-            receipts[index] = record
-            break
-    else:
-        receipts.insert(0, record)
-
-    save_processed_receipts(receipts)
-    return record_id
-
-
-
-def get_processed_receipt(receipt_id: str) -> dict[str, Any] | None:
-    for receipt in load_processed_receipts():
-        if receipt.get("id") == receipt_id:
-            return receipt
-    return None
-
-
-
-def send_amount_to_spliit(total: float, selected_items: list[ReceiptItem]) -> dict[str, Any]:
-    spliit_url = os.getenv("SPLIIT_API_URL")
-    spliit_api_key = os.getenv("SPLIIT_API_KEY")
-
-    payload = {
-        "amount": total,
-        "currency": "EUR",
-        "description": f"REWE receipt split ({len(selected_items)} items)",
-        "items": [{"name": item.name, "price": item.price} for item in selected_items],
-    }
-
-    if not spliit_url:
-        return {
-            "sent": False,
-            "message": "SPLIIT_API_URL is not configured. No transfer was made.",
-            "payload": payload,
-        }
-
-    headers = {"Content-Type": "application/json"}
-    if spliit_api_key:
-        headers["X-API-Key"] = spliit_api_key
-
-    response = requests.post(spliit_url, json=payload, headers=headers, timeout=10)
-    response.raise_for_status()
-
-    return {"sent": True, "message": "Amount transferred to Spliit.", "payload": payload}
-
-
-
-def parse_items_from_form() -> tuple[list[ReceiptItem], list[int]]:
-    selected_indices = [int(i) for i in request.form.getlist("selected_indices") if i.isdigit()]
-    selected_index_set = set(selected_indices)
-    item_count = int(request.form.get("item_count", "0"))
-
-    items: list[ReceiptItem] = []
-    kept_selected: list[int] = []
-    for index in range(item_count):
-        name = request.form.get(f"item_name_{index}", "").strip()
-        price_value = request.form.get(f"item_price_{index}", "0")
-
-        if not name:
-            continue
-
-        try:
-            price = float(price_value)
-        except ValueError:
-            continue
-
-        items.append(ReceiptItem(name=name, price=price))
-        actual_index = len(items) - 1
-        if index in selected_index_set:
-            kept_selected.append(actual_index)
-
-    return items, kept_selected
-
+# --- receipt list / detail ---------------------------------------------------
 
 @app.get("/")
 def index() -> str:
-    return render_template("index.html")
+    receipts = db.list_receipts()
+    return render_template("index.html", receipts=receipts)
 
 
-@app.get("/receipts")
-def list_receipts() -> str:
-    receipts = load_processed_receipts()
-    return render_template("receipts.html", receipts=receipts)
-
-
-@app.get("/receipts/<receipt_id>/edit")
-def edit_receipt(receipt_id: str) -> str:
-    receipt = get_processed_receipt(receipt_id)
+@app.get("/receipts/<receipt_id>")
+def receipt_detail(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
     if not receipt:
         abort(404)
-
-    items = [
-        ReceiptItem(name=item.get("name", ""), price=float(item.get("price", 0.0)))
-        for item in receipt.get("all_items", [])
-        if item.get("name")
-    ]
-    selected_indices = [
-        index
-        for index in receipt.get("selected_indices", [])
-        if isinstance(index, int) and 0 <= index < len(items)
-    ]
-
+    included_total = round(
+        sum(i.total_price for i in receipt.items if i.included), 2
+    )
     return render_template(
-        "select_items.html",
-        items=items,
-        original_text="",
-        preselected_indices=set(selected_indices),
-        receipt_id=receipt_id,
+        "detail.html", receipt=receipt, included_total=included_total
     )
 
 
-@app.post("/parse")
-def parse_receipt() -> str:
-    receipt_text = request.form.get("receipt_text", "")
-    receipt_pdf = request.files.get("receipt_pdf")
+@app.get("/receipts/<receipt_id>/file")
+def receipt_file(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
+    if not receipt or not receipt.file_path:
+        abort(404)
+    return send_file(receipt.file_path)
 
-    if receipt_pdf and receipt_pdf.filename:
-        receipt_text = extract_text_from_pdf(receipt_pdf.stream)
 
-    items = parse_receipt_text(receipt_text)
-    return render_template(
-        "select_items.html",
-        items=items,
-        original_text=receipt_text,
-        preselected_indices=set(),
-        receipt_id="",
+@app.post("/receipts/<receipt_id>/delete")
+def delete_receipt(receipt_id: str):
+    external_id = db.delete_receipt(receipt_id)
+    if external_id is None:
+        abort(404)
+    flash(
+        "Receipt deleted. If it was a Rewe document, the next Paperless poll "
+        "(or a manual poll) will re-import it with the current extraction."
     )
+    return redirect(url_for("index"))
 
 
-@app.post("/send-to-spliit")
-def send_to_spliit() -> str:
-    all_items, selected_indices = parse_items_from_form()
-    selected_set = set(selected_indices)
-    selected_items = [item for idx, item in enumerate(all_items) if idx in selected_set]
-    total = calculate_total(selected_items)
+@app.post("/receipts/<receipt_id>/save")
+def save_receipt(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        abort(404)
+    items = _parse_items_from_form()
+    db.replace_items(receipt_id, items)
+    flash("Saved.")
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
+@app.post("/receipts/<receipt_id>/spliit")
+def create_spliit_expense(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        abort(404)
+    if receipt.status == "settled":
+        flash("Receipt is already settled; not creating a duplicate expense.")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+    # Persist any last edits/selection from the form first.
+    items = _parse_items_from_form()
+    if items:
+        db.replace_items(receipt_id, items)
+        receipt = db.get_receipt(receipt_id)
+
+    included = [i for i in receipt.items if i.included]
+    if not included:
+        flash("Select at least one item before creating an expense.")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+    # Learning loop: remember confirmed AI-parsed lines so they are matched
+    # deterministically next time.
+    _learn_from_form(items)
+
+    total = round(sum(i.total_price for i in included), 2)
+    date_part = (receipt.purchase_date or "")[:10]
+    title = f"{receipt.store or receipt.source.upper()} {date_part}".strip()
 
     try:
-        result = send_amount_to_spliit(total=total, selected_items=selected_items)
-    except requests.RequestException as exc:
-        result = {
-            "sent": False,
-            "message": f"Spliit transfer failed: {exc}",
-            "payload": {
-                "amount": total,
-                "currency": "EUR",
-                "description": f"REWE receipt split ({len(selected_items)} items)",
-                "items": [{"name": item.name, "price": item.price} for item in selected_items],
-            },
-        }
+        expense_id = spliit.create_expense(
+            title=title or "Receipt",
+            amount_eur=total,
+            notes=f"{len(included)} items imported from {receipt.source} receipt",
+            expense_date=receipt.purchase_date,
+        )
+    except Exception as exc:
+        logger.exception("Spliit expense creation failed")
+        flash(f"Spliit expense creation failed: {exc}")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 
-    receipt_id = upsert_processed_receipt(
-        all_items=all_items,
-        selected_indices=selected_indices,
-        receipt_id=request.form.get("receipt_id") or None,
-    )
+    db.mark_settled(receipt_id, expense_id)
+    flash(f"Created Spliit expense {expense_id} for €{total:.2f}.")
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 
-    return render_template(
-        "result.html",
-        selected_items=selected_items,
-        total=total,
-        result=result,
-        receipt_id=receipt_id,
+
+def _learn_from_form(items: list[dict]) -> None:
+    for item in items:
+        if not item.get("included"):
+            continue
+        if item.get("source_method") != "ollama":
+            continue
+        raw_line = item.get("raw_line") or normalize_line(item["name"])
+        db.upsert_known_item(raw_line, item["name"])
+
+
+# --- manual entry (paste OCR / upload PDF / paste Lidl JSON) ------------------
+
+@app.get("/manual")
+def manual_form() -> str:
+    return render_template("manual.html")
+
+
+@app.post("/manual")
+def manual_submit():
+    receipt_text = request.form.get("receipt_text", "")
+    receipt_pdf = request.files.get("receipt_pdf")
+    store_source = (request.form.get("store_source") or "rewe").strip().lower()
+    external_ref = (request.form.get("external_id") or "").strip()
+
+    if receipt_pdf and receipt_pdf.filename:
+        from pypdf import PdfReader  # imported lazily; only needed for PDF uploads
+
+        reader = PdfReader(receipt_pdf.stream)
+        receipt_text = "\n".join(p.extract_text() or "" for p in reader.pages)
+
+    if store_source == "lidl":
+        try:
+            items = extraction.parse_lidl_receipt(json.loads(receipt_text))
+        except (json.JSONDecodeError, TypeError):
+            items = extraction.extract_rewe_items(receipt_text, db.get_known_items())
+            store_source = "rewe"
+    else:
+        items = extraction.extract_rewe_items(receipt_text, db.get_known_items())
+
+    import uuid
+    external_id = external_ref or f"manual:{store_source}:{uuid.uuid4().hex[:12]}"
+    receipt_id = db.create_receipt(
+        source=store_source,
+        external_id=external_id,
+        items=items,
+        store=store_source.upper(),
     )
+    if receipt_id is None:
+        flash("A receipt with that external id was already imported.")
+        return redirect(url_for("index"))
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
+# --- Paperless webhook + manual poll ----------------------------------------
+
+@app.post("/webhook/paperless")
+def paperless_webhook():
+    """Post-consumption webhook from Paperless-ngx.
+
+    Auth: a shared token via the ``X-Webhook-Token`` header (or ``token`` in the
+    body), compared to ``PAPERLESS_WEBHOOK_TOKEN``. Document id from JSON or form
+    (``document_id``).
+    """
+    if config.PAPERLESS_WEBHOOK_TOKEN:
+        supplied = request.headers.get("X-Webhook-Token") or request.values.get("token")
+        if supplied != config.PAPERLESS_WEBHOOK_TOKEN:
+            abort(401)
+
+    payload = request.get_json(silent=True) or request.form
+    document_id = payload.get("document_id") or payload.get("id")
+    if document_id is None:
+        return jsonify({"error": "document_id is required"}), 400
+    try:
+        document_id = int(document_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "document_id must be an integer"}), 400
+
+    try:
+        receipt_id = ingest.ingest_rewe_document(document_id)
+    except Exception as exc:
+        logger.exception("Webhook ingest failed")
+        return jsonify({"error": str(exc)}), 500
+
+    if receipt_id is None:
+        return jsonify({"status": "skipped", "reason": "duplicate or no items"}), 200
+    return jsonify({"status": "imported", "receipt_id": receipt_id}), 201
+
+
+@app.post("/poll")
+def manual_poll():
+    imported = ingest.poll_rewe_documents()
+    flash(f"Poll complete: imported {len(imported)} new receipt(s).")
+    return redirect(url_for("index"))
+
+
+@app.get("/healthz")
+def healthz():
+    return jsonify({"status": "ok"})
+
+
+def create_app() -> Flask:
+    db.init_db()
+    scheduler.start()
+    return app
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    create_app()
+    app.run(host=config.APP_HOST, port=config.APP_PORT)

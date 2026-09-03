@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Receipt {{ receipt.store }}{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="detail-head">
+      <div>
+        <h1>{{ receipt.store or receipt.source|upper }}</h1>
+        <p class="muted">
+          <span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span>
+          {{ (receipt.purchase_date or receipt.created_at)[:10] }} ·
+          <span class="status status-{{ receipt.status }}">{{ receipt.status }}</span>
+          {% if receipt.spliit_expense_id %}
+            · Spliit expense <code>{{ receipt.spliit_expense_id }}</code>
+          {% endif %}
+        </p>
+      </div>
+      <a href="{{ url_for('index') }}" class="link-btn">← All receipts</a>
+    </div>
+
+    <div class="detail-grid">
+      <div class="receipt-viewer">
+        {% if receipt.file_path %}
+          <object data="{{ url_for('receipt_file', receipt_id=receipt.id) }}"
+                  type="application/pdf" width="100%" height="640">
+            <p>Cannot display the PDF inline.
+              <a href="{{ url_for('receipt_file', receipt_id=receipt.id) }}">Open the receipt file</a>.</p>
+          </object>
+        {% else %}
+          <div class="no-file">No receipt file stored for this receipt.</div>
+        {% endif %}
+      </div>
+
+      <form method="post" id="items-form" class="items-panel">
+        <input type="hidden" name="item_count" value="{{ receipt.items|length }}" />
+        <input type="hidden" name="receipt_total" value="{{ receipt.total_amount }}" />
+        <table class="items">
+          <thead>
+            <tr>
+              <th class="cb-col">
+                <input type="checkbox" id="select-all" title="Select all / none"
+                       {% if receipt.status == 'settled' %}disabled{% endif %} />
+              </th>
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th class="num">Total&nbsp;(€)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in receipt.items %}
+            <tr class="{% if not item.included %}excluded{% endif %}">
+              <td class="cb-col">
+                <input type="checkbox" name="included" value="{{ loop.index0 }}"
+                       class="include-cb"
+                       {% if item.included %}checked{% endif %}
+                       {% if receipt.status == 'settled' %}disabled{% endif %} />
+              </td>
+              <td>
+                <div class="item-name-cell">
+                  <input type="text" name="name_{{ loop.index0 }}" value="{{ item.name }}"
+                         {% if receipt.status == 'settled' %}readonly{% endif %} />
+                  {% if item.source_method == 'ollama' %}
+                    <span class="src src-ai" title="Extracted by the AI fallback — confirm it, and it's learned for next time">AI</span>
+                  {% elif item.source_method == 'known' %}
+                    <span class="src src-known" title="Matched a learned known-item">✓</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="num">
+                <input type="number" step="0.001" name="quantity_{{ loop.index0 }}"
+                       value="{{ item.quantity|round(3)|int if item.quantity == item.quantity|int else item.quantity }}"
+                       class="qty"
+                       {% if receipt.status == 'settled' %}readonly{% endif %} />
+              </td>
+              <td class="num">
+                <input type="number" step="0.01" name="total_price_{{ loop.index0 }}"
+                       value="{{ "%.2f"|format(item.total_price) }}" class="price"
+                       {% if receipt.status == 'settled' %}readonly{% endif %} />
+              </td>
+              <input type="hidden" name="raw_line_{{ loop.index0 }}" value="{{ item.raw_line or '' }}" />
+              <input type="hidden" name="source_method_{{ loop.index0 }}" value="{{ item.source_method }}" />
+            </tr>
+            {% endfor %}
+            {% if not receipt.items %}
+            <tr><td colspan="4" class="muted">No items were extracted from this receipt.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+
+        <div class="total-row">
+          <span><span id="selected-count">0</span> selected</span>
+          <span class="total-amounts">
+            <strong id="running-total">€{{ "%.2f"|format(included_total) }}</strong>
+            <span class="muted">of €{{ "%.2f"|format(receipt.total_amount) }} receipt total</span>
+          </span>
+        </div>
+        <div id="total-warning" class="total-warning" hidden></div>
+
+        {% if receipt.status != 'settled' %}
+          <div class="actions">
+            <button type="submit" formaction="{{ url_for('save_receipt', receipt_id=receipt.id) }}">
+              Save changes
+            </button>
+            <button type="submit" class="primary" id="spliit-btn"
+                    formaction="{{ url_for('create_spliit_expense', receipt_id=receipt.id) }}">
+              Create Spliit expense
+            </button>
+          </div>
+        {% else %}
+          <p class="muted">This receipt has been settled to Spliit and is read-only.</p>
+        {% endif %}
+      </form>
+
+      <form method="post" action="{{ url_for('delete_receipt', receipt_id=receipt.id) }}"
+            class="delete-form"
+            onsubmit="return confirm('Delete this receipt? A Rewe document will be re-imported on the next poll with the current extraction.');">
+        <button type="submit" class="danger-link">Delete receipt</button>
+      </form>
+    </div>
+  </section>
+
+  <script>
+    (function () {
+      const form = document.getElementById('items-form');
+      if (!form) return;
+      const totalEl = document.getElementById('running-total');
+      const countEl = document.getElementById('selected-count');
+      const warnEl = document.getElementById('total-warning');
+      const spliitBtn = document.getElementById('spliit-btn');
+      const selectAll = document.getElementById('select-all');
+      const receiptTotal = parseFloat(form.querySelector('[name="receipt_total"]').value) || 0;
+
+      function recalc() {
+        let total = 0, count = 0;
+        form.querySelectorAll('tbody tr').forEach(function (row) {
+          const cb = row.querySelector('.include-cb');
+          const price = row.querySelector('.price');
+          if (!cb) return;
+          row.classList.toggle('excluded', !cb.checked);
+          if (cb.checked && price) {
+            total += parseFloat(price.value) || 0;
+            count += 1;
+          }
+        });
+        totalEl.textContent = '€' + total.toFixed(2);
+        countEl.textContent = count;
+        if (spliitBtn) spliitBtn.disabled = count === 0;
+
+        // Gentle hint when the selection doesn't add up to the receipt total.
+        const diff = Math.abs(total - receiptTotal);
+        if (receiptTotal > 0 && diff > 0.005) {
+          warnEl.hidden = false;
+          warnEl.textContent = (total < receiptTotal ? 'Selection is €' + diff.toFixed(2) + ' below' : 'Selection is €' + diff.toFixed(2) + ' above') + ' the receipt total.';
+        } else {
+          warnEl.hidden = true;
+        }
+
+        if (selectAll) {
+          const boxes = form.querySelectorAll('.include-cb');
+          const checked = form.querySelectorAll('.include-cb:checked');
+          selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
+          selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
+        }
+      }
+
+      if (selectAll) {
+        selectAll.addEventListener('change', function () {
+          form.querySelectorAll('.include-cb').forEach(function (cb) {
+            if (!cb.disabled) cb.checked = selectAll.checked;
+          });
+          recalc();
+        });
+      }
+
+      form.addEventListener('input', recalc);
+      form.addEventListener('change', recalc);
+      recalc();
+    })();
+  </script>
+{% endblock %}

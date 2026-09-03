@@ -1,23 +1,48 @@
 {% extends "base.html" %}
 
-{% block title %}REWE Receipts → Spliit{% endblock %}
+{% block title %}Receipts{% endblock %}
 
 {% block content %}
   <section class="card">
-    <h1>REWE Receipts → Spliit</h1>
-    <p class="muted">Upload a PDF or paste OCR text to detect items for splitting.</p>
-    <p><a href="/receipts">View processed receipts</a></p>
+    <h1>Receipts</h1>
+    <p class="muted">
+      Rewe receipts are imported automatically from Paperless-ngx.
+      Lidl receipts are added by the Lidl Plus poller (follow-up) or via
+      <a href="{{ url_for('manual_form') }}">manual add</a>.
+    </p>
 
-    <form action="/parse" method="post" enctype="multipart/form-data">
-      <p>
-        <label for="receipt_pdf">Receipt PDF</label>
-        <input id="receipt_pdf" name="receipt_pdf" type="file" accept="application/pdf" />
-      </p>
-      <p>
-        <label for="receipt_text">Receipt text (paperless OCR)</label>
-        <textarea id="receipt_text" name="receipt_text"></textarea>
-      </p>
-      <button type="submit">Parse receipt</button>
-    </form>
+    {% if receipts %}
+      <div class="table-scroll">
+      <table class="receipts">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Source</th>
+            <th>Store</th>
+            <th class="num">Items</th>
+            <th class="num">Total</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for receipt in receipts %}
+          <tr onclick="window.location='{{ url_for('receipt_detail', receipt_id=receipt.id) }}'">
+            <td data-label="Date">{{ (receipt.purchase_date or receipt.created_at)[:10] }}</td>
+            <td data-label="Source"><span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span></td>
+            <td data-label="Store">{{ receipt.store }}</td>
+            <td class="num" data-label="Items">{{ receipt.item_count }}</td>
+            <td class="num amount" data-label="Total">€{{ "%.2f"|format(receipt.total_amount) }}</td>
+            <td data-label="Status">
+              <span class="status status-{{ receipt.status }}">{{ receipt.status }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p>No receipts yet. They will appear here once Paperless imports a Rewe
+      document, or add one manually.</p>
+    {% endif %}
   </section>
 {% endblock %}

@@ -1,0 +1,39 @@
+# Receipt Importer service.
+#
+# Reaching Paperless-ngx and Spliit: pick ONE of the two options below.
+#
+#  A) Simplest — use their LAN IPs (already set in .env: PAPERLESS_URL /
+#     SPLIIT_URL point at 192.168.178.100). Works regardless of which Docker
+#     network anything is on. This is what's active below (`network_mode: bridge`,
+#     no `networks:` block).
+#
+#  B) Reach them by container name instead — find the network they're actually
+#     on with `docker network ls` + `docker inspect <container> | grep -A3 Networks`,
+#     then replace the `network_mode: bridge` line with:
+#
+#       networks:
+#         - receipts-net
+#
+#     ...and uncomment the `networks:` block at the bottom, setting `name:` to
+#     that real network name.
+
+services:
+  receipt-importer:
+    build: .
+    # image: receipt-importer:latest   # or pull/push a prebuilt image
+    container_name: receipt-importer
+    restart: unless-stopped
+    network_mode: bridge
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Adjust to your appdata path; matches the `data/` dir already next to this repo.
+      - ../data:/app/data
+
+# Option B (see comment above): uncomment and set the real network name.
+# networks:
+#   receipts-net:
+#     name: <your-paperless-or-spliit-network-name>
+#     external: true
