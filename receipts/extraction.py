@@ -25,6 +25,16 @@ from .models import ExtractedItem
 
 # --- Line filtering ----------------------------------------------------------
 
+# Reaching one of these lines means the item list is over: everything below is
+# the total, payment, tax, and cashback/loyalty section. Parsing stops here.
+END_OF_ITEMS_PREFIXES = (
+    "summe",
+    "gesamt",
+    "zu zahlen",
+    "zu zahlender betrag",
+    "total",
+)
+
 IGNORED_LINE_PREFIXES = (
     "summe",
     "gesamt",
@@ -49,12 +59,42 @@ IGNORED_LINE_KEYWORDS = (
     "rabatt",
     "mit diesem",
     "hast du",
+    # REWE Beste Wahl / PAYBACK cashback lines (belt-and-suspenders; these
+    # normally sit below SUMME and are already cut off there).
+    "auf rewe",
+    "beste wahl",
+    "% auf",
+    "payback",
+    "coupon",
+    "ersparnis",
 )
 
 # Matches a price like 1,23 / -1,23 / 12.34 (with a mandatory 2-decimal part).
 PRICE_REGEX = re.compile(r"-?\d{1,4}(?:[.,]\d{2})")
 # Quantity prefix like "2 x" / "3x" at the start of a line.
 QUANTITY_REGEX = re.compile(r"^(\d{1,3})\s*[xX*]\s+")
+# A quantity/weight breakdown sub-line that belongs to the item above it, e.g.
+# "3 Stk x 1,29" or "0,234 kg x 5,99 EUR/kg" — NOT a separate article.
+QUANTITY_BREAKDOWN_REGEX = re.compile(
+    r"^\s*(\d+(?:[.,]\d+)?)\s*(?:stk|st|stück|kg|g|l|ml)?\.?\s*[x×*]\s*(\d+(?:[.,]\d{2}))",
+    re.IGNORECASE,
+)
+
+
+def parse_quantity_breakdown(line: str) -> Optional[tuple[float, float]]:
+    """Parse a quantity/unit-price breakdown sub-line.
+
+    Returns ``(quantity, unit_price)`` when the line is a breakdown descriptor
+    (e.g. ``3 Stk x 1,29``), otherwise ``None``.
+    """
+    match = QUANTITY_BREAKDOWN_REGEX.match(line)
+    if not match:
+        return None
+    quantity = float(match.group(1).replace(",", "."))
+    unit_price = float(match.group(2).replace(",", "."))
+    if quantity <= 0:
+        return None
+    return quantity, unit_price
 
 
 def is_probable_item_name(name: str, lowered_line: str) -> bool:
@@ -172,6 +212,10 @@ def parse_rewe_line(line: str) -> Optional[ExtractedItem]:
     if lowered.startswith(IGNORED_LINE_PREFIXES):
         return None
 
+    # A quantity/weight breakdown ("3 Stk x 1,29") is not an item of its own.
+    if parse_quantity_breakdown(stripped) is not None:
+        return None
+
     price_matches = list(PRICE_REGEX.finditer(stripped))
     if not price_matches:
         return None
@@ -207,7 +251,8 @@ def extract_rewe_items(
 ) -> list[ExtractedItem]:
     """Hybrid extraction over Rewe OCR text.
 
-    Order per line: known-items table -> regex -> collect residue. Residual
+    Order per line: stop at the total -> merge quantity breakdowns into the
+    previous item -> known-items table -> regex -> collect residue. Residual
     lines that look like they *might* be items are sent to Ollama in one batch.
     """
     known_items = known_items or {}
@@ -220,6 +265,23 @@ def extract_rewe_items(
     for raw_line in receipt_text.splitlines():
         line = raw_line.strip()
         if not line:
+            continue
+
+        lowered = line.lower()
+
+        # 0) End of the item list: SUMME / total. Everything below (payment,
+        #    tax, cashback, bonus) is not an article — stop parsing entirely.
+        if lowered.startswith(END_OF_ITEMS_PREFIXES):
+            break
+
+        # 0b) Quantity/weight breakdown ("3 Stk x 1,29"): enrich the previous
+        #     item with quantity + unit price instead of adding a phantom item.
+        breakdown = parse_quantity_breakdown(line)
+        if breakdown is not None:
+            if items:
+                quantity, unit_price = breakdown
+                items[-1].quantity = quantity
+                items[-1].unit_price = unit_price
             continue
 
         normalized = normalize_line(line)
@@ -242,7 +304,6 @@ def extract_rewe_items(
             continue
 
         # 3) Residue -> AI fallback candidate (skip obvious noise).
-        lowered = line.lower()
         if lowered.startswith(IGNORED_LINE_PREFIXES):
             continue
         if any(keyword in lowered for keyword in IGNORED_LINE_KEYWORDS):

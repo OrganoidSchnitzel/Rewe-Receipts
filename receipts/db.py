@@ -286,6 +286,22 @@ def get_receipt(receipt_id: str) -> Optional[Receipt]:
         return receipt
 
 
+def delete_receipt(receipt_id: str) -> Optional[str]:
+    """Delete a receipt (and its items, via ON DELETE CASCADE).
+
+    Returns the receipt's ``external_id`` so the caller can decide whether a
+    re-poll should re-import it, or ``None`` if it didn't exist.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT external_id FROM receipts WHERE id = ?", (receipt_id,)
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM receipts WHERE id = ?", (receipt_id,))
+        return row["external_id"]
+
+
 # --- Known-items (learning loop) --------------------------------------------
 
 def get_known_items() -> dict[str, dict]:

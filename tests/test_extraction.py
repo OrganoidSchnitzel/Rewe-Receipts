@@ -49,6 +49,36 @@ SUMME 5,18
     def test_non_priced_line_returns_none(self) -> None:
         self.assertIsNone(parse_rewe_line("VIELEN DANK FUER IHREN EINKAUF"))
 
+    def test_stops_at_summe_and_ignores_cashback_below(self) -> None:
+        receipt = """
+SKYR NATUR              3,87 B
+JODSALZ                 0,79 B
+SUMME              EUR   16,31
+Geg. VISA            EUR  13,27
+10% auf REWE Beste Wahl      0,30
+0,10EUR auf REWE Beste       0,10
+"""
+        items = extract_rewe_items(receipt)
+        self.assertEqual(["SKYR NATUR", "JODSALZ"], [i.name for i in items])
+
+    def test_quantity_breakdown_merges_into_previous_item(self) -> None:
+        # "3 Stk x 1,29" is a sub-line of SKYR NATUR, not a separate article.
+        receipt = """
+SKYR NATUR              3,87 B
+        3 Stk x    1,29
+PIZZA CL.TEX-MEX        2,19 B
+"""
+        items = extract_rewe_items(receipt)
+        self.assertEqual(["SKYR NATUR", "PIZZA CL.TEX-MEX"], [i.name for i in items])
+        skyr = items[0]
+        self.assertEqual(3.0, skyr.quantity)
+        self.assertEqual(1.29, skyr.unit_price)
+        self.assertEqual(3.87, skyr.total_price)  # own total preserved
+
+    def test_weight_breakdown_is_not_an_item(self) -> None:
+        self.assertIsNone(parse_rewe_line("0,234 kg x 5,99 EUR/kg"))
+        self.assertIsNone(parse_rewe_line("3 Stk x 1,29"))
+
 
 class KnownItemsTests(unittest.TestCase):
     def test_known_item_overrides_name_deterministically(self) -> None:

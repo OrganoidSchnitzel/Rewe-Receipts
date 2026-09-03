@@ -94,6 +94,18 @@ def receipt_file(receipt_id: str):
     return send_file(receipt.file_path)
 
 
+@app.post("/receipts/<receipt_id>/delete")
+def delete_receipt(receipt_id: str):
+    external_id = db.delete_receipt(receipt_id)
+    if external_id is None:
+        abort(404)
+    flash(
+        "Receipt deleted. If it was a Rewe document, the next Paperless poll "
+        "(or a manual poll) will re-import it with the current extraction."
+    )
+    return redirect(url_for("index"))
+
+
 @app.post("/receipts/<receipt_id>/save")
 def save_receipt(receipt_id: str):
     receipt = db.get_receipt(receipt_id)

@@ -154,12 +154,53 @@ table.items input[type="text"] { width: 100%; margin: 0; }
 table.items input.qty { width: 4.5rem; margin: 0; text-align: right; }
 table.items input.price { width: 6rem; margin: 0; text-align: right; }
 
+table.items th.cb-col, table.items td.cb-col { width: 1.8rem; text-align: center; }
+table.items tbody tr.excluded input[type="text"],
+table.items tbody tr.excluded input.qty,
+table.items tbody tr.excluded input.price { color: var(--muted); }
+table.items tbody tr.excluded { opacity: 0.65; }
+
+.item-name-cell { display: flex; align-items: center; gap: 0.4rem; }
+.item-name-cell input[type="text"] { flex: 1; }
+
+.src {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.05rem 0.3rem;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.src-ai { background: #fdecc8; color: #8a5a00; }
+.src-known { background: #d8f0e0; color: var(--ok); }
+
 .total-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 0.8rem 0.2rem;
+  align-items: baseline;
+  padding: 0.8rem 0.2rem 0.4rem;
   font-size: 1.1rem;
 }
+.total-amounts { text-align: right; }
+.total-amounts .muted { font-size: 0.8rem; display: block; }
+
+.total-warning {
+  background: #fff4e5;
+  border: 1px solid #f5d9a8;
+  color: #8a5a00;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.6rem;
+}
+
+.delete-form { grid-column: 1 / -1; text-align: right; margin-top: 0.5rem; }
+.danger-link {
+  background: none;
+  color: #b4232c;
+  font-weight: 600;
+  padding: 0.3rem 0.2rem;
+  font-size: 0.85rem;
+}
+.danger-link:hover { background: none; text-decoration: underline; }
 
 code { background: #f0f4f9; padding: 0.1rem 0.35rem; border-radius: 5px; }
