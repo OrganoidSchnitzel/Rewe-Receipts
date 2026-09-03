@@ -71,9 +71,17 @@ LIDL_LANGUAGE = _get("LIDL_LANGUAGE", "de")
 LIDL_TOKEN_PATH = Path(_get("LIDL_TOKEN_PATH", "/app/data/lidl_token.json"))
 LIDL_POLL_INTERVAL_SECONDS = _get_int("LIDL_POLL_INTERVAL_SECONDS", 3600)
 
+# --- Telegram notifications --------------------------------------------------
+TELEGRAM_ENABLED = _get_bool("TELEGRAM_ENABLED", False)
+TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID")
+
 # --- Web server --------------------------------------------------------------
 APP_HOST = _get("APP_HOST", "0.0.0.0")
 APP_PORT = _get_int("APP_PORT", 8000)
+# Base URL the app is reached at, used to build links in notifications
+# (e.g. http://192.168.178.100:8881). No trailing slash.
+APP_PUBLIC_URL = _get("APP_PUBLIC_URL").rstrip("/")
 
 # HTTP timeout for outbound calls (Paperless / Spliit / Ollama), seconds.
 HTTP_TIMEOUT = _get_int("HTTP_TIMEOUT", 30)

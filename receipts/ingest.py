@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from . import config, db, extraction, paperless
+from . import config, db, extraction, notifier, paperless
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,9 @@ def ingest_rewe_document(document_id: int) -> Optional[str]:
         "Imported Rewe document %s as receipt %s (%d items)",
         document_id, receipt_id, len(items),
     )
+
+    total = round(sum(i.total_price for i in items), 2)
+    notifier.notify_new_receipt(receipt_id, "REWE receipt", len(items), total)
     return receipt_id
 
 

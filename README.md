@@ -72,6 +72,14 @@ custom splits can be added later if you want them.
 On success the returned Spliit `expenseId` is stored against the receipt and it
 is marked `settled`, so it can't create a duplicate expense.
 
+### Telegram notifications (optional)
+
+Get a push message the moment a new receipt is auto-imported and ready to
+review. This is outbound-only — one HTTPS call to the Telegram Bot API, no
+inbound webhook or extra ports. Enable it with `TELEGRAM_ENABLED=true` and set
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (see `.env.example` for how to get
+them) plus `APP_PUBLIC_URL` so the message links straight to the receipt.
+
 ## Configuration
 
 All config is via environment variables — see [`.env.example`](.env.example)
@@ -159,6 +167,7 @@ receipts/
   paperless.py             Paperless-ngx REST client
   spliit.py                Spliit tRPC client (participants, create expense)
   ingest.py                orchestration + duplicate detection
+  notifier.py              Telegram notifications
   scheduler.py             background polling thread
 templates/  static/        web UI
 scripts/paperless_post_consume.sh   Paperless webhook hook
