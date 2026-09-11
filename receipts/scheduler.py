@@ -1,46 +1,60 @@
 """Lightweight background polling.
 
-A daemon thread polls Paperless-ngx for new Rewe documents on an interval, as a
-fallback in case a webhook event is missed. No external scheduler dependency —
-this is a single-user home service.
+Daemon threads poll Paperless-ngx (Rewe) and, when configured, the Lidl Plus
+API on their own intervals — a fallback in case a webhook event is missed, and
+the sole trigger for Lidl. No external scheduler dependency; this is a
+single-user home service.
 """
 from __future__ import annotations
 
 import logging
 import threading
 
-from . import config, ingest
+from . import config, ingest, lidl
 
 logger = logging.getLogger(__name__)
 
-_thread: threading.Thread | None = None
+_threads: list[threading.Thread] = []
 _stop = threading.Event()
 
 
-def _loop() -> None:
-    logger.info("Rewe polling started (every %ss)", config.POLL_INTERVAL_SECONDS)
+def _run_periodically(name: str, interval: int, job) -> None:
+    logger.info("%s polling started (every %ss)", name, interval)
     # Initial delay so the web server is up before the first poll.
-    while not _stop.wait(min(15, config.POLL_INTERVAL_SECONDS)):
+    while not _stop.wait(min(15, interval)):
         try:
-            imported = ingest.poll_rewe_documents()
+            imported = job()
             if imported:
-                logger.info("Poll imported %d new receipt(s)", len(imported))
+                logger.info("%s poll imported %d new receipt(s)", name, len(imported))
         except Exception as exc:
-            logger.warning("Poll iteration error: %s", exc)
-        if _stop.wait(config.POLL_INTERVAL_SECONDS):
+            logger.warning("%s poll iteration error: %s", name, exc)
+        if _stop.wait(interval):
             break
 
 
+def _spawn(name: str, interval: int, job) -> None:
+    thread = threading.Thread(
+        target=_run_periodically, args=(name, interval, job),
+        name=f"{name.lower()}-poll", daemon=True,
+    )
+    thread.start()
+    _threads.append(thread)
+
+
 def start() -> None:
-    global _thread
-    if not config.POLL_ENABLED:
-        logger.info("Polling disabled (POLL_ENABLED=false)")
-        return
-    if _thread and _thread.is_alive():
+    if _threads:
         return
     _stop.clear()
-    _thread = threading.Thread(target=_loop, name="rewe-poll", daemon=True)
-    _thread.start()
+
+    if config.POLL_ENABLED:
+        _spawn("Rewe", config.POLL_INTERVAL_SECONDS, ingest.poll_rewe_documents)
+    else:
+        logger.info("Rewe polling disabled (POLL_ENABLED=false)")
+
+    if lidl.is_configured():
+        _spawn("Lidl", config.LIDL_POLL_INTERVAL_SECONDS, ingest.poll_lidl_tickets)
+    else:
+        logger.info("Lidl polling disabled (LIDL_ENABLED / LIDL_REFRESH_TOKEN unset)")
 
 
 def stop() -> None:

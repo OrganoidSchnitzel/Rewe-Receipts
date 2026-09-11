@@ -36,6 +36,22 @@ def _get(path: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     return response.json()
 
 
+def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    url = f"{config.PAPERLESS_URL}{path}"
+    headers = {**_headers(), "Content-Type": "application/json"}
+    response = requests.post(url, headers=headers, json=payload, timeout=config.HTTP_TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
+def _patch(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    url = f"{config.PAPERLESS_URL}{path}"
+    headers = {**_headers(), "Content-Type": "application/json"}
+    response = requests.patch(url, headers=headers, json=payload, timeout=config.HTTP_TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
 def get_rewe_tag_id() -> Optional[int]:
     """Resolve the configured Rewe tag name to its Paperless tag id."""
     data = _get("/api/tags/", params={"name__iexact": config.PAPERLESS_REWE_TAG})
@@ -91,3 +107,32 @@ def download_document(document_id: int, dest_path: str) -> str:
 def document_purchase_date(doc: dict[str, Any]) -> Optional[str]:
     """Best-effort purchase date: Paperless 'created' (document date)."""
     return doc.get("created") or doc.get("created_date")
+
+
+def get_or_create_tag(name: str) -> Optional[int]:
+    """Resolve a tag name to its id, creating the tag if it doesn't exist."""
+    if not name:
+        return None
+    data = _get("/api/tags/", params={"name__iexact": name})
+    for tag in data.get("results", []):
+        if tag.get("name", "").lower() == name.lower():
+            return tag["id"]
+    created = _post("/api/tags/", {"name": name})
+    return created.get("id")
+
+
+def add_tag_to_document(doc: dict[str, Any], tag_id: int) -> None:
+    """Add a tag to a document (idempotent), preserving its existing tags."""
+    existing = list(doc.get("tags") or [])
+    if tag_id in existing:
+        return
+    _patch(f"/api/documents/{doc['id']}/", {"tags": existing + [tag_id]})
+
+
+def mark_document_processed(doc: dict[str, Any]) -> None:
+    """Tag a document with the configured 'processed' tag (best-effort)."""
+    if not config.PAPERLESS_TAG_ON_IMPORT or not config.PAPERLESS_PROCESSED_TAG:
+        return
+    tag_id = get_or_create_tag(config.PAPERLESS_PROCESSED_TAG)
+    if tag_id is not None:
+        add_tag_to_document(doc, tag_id)

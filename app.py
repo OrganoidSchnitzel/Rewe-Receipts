@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from receipts import config, db, extraction, ingest, scheduler, spliit
+from receipts import config, db, extraction, ingest, lidl, scheduler, spliit
 from receipts.extraction import normalize_line
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = "receipt-importer"  # only used for flash messages (LAN-only)
+
+
+@app.context_processor
+def inject_flags() -> dict:
+    """Expose feature flags to templates (e.g. whether to show the Lidl poll)."""
+    return {"lidl_enabled": lidl.is_configured()}
 
 
 # --- helpers -----------------------------------------------------------------
@@ -253,7 +259,17 @@ def paperless_webhook():
 @app.post("/poll")
 def manual_poll():
     imported = ingest.poll_rewe_documents()
-    flash(f"Poll complete: imported {len(imported)} new receipt(s).")
+    flash(f"Paperless poll complete: imported {len(imported)} new receipt(s).")
+    return redirect(url_for("index"))
+
+
+@app.post("/poll/lidl")
+def manual_poll_lidl():
+    if not lidl.is_configured():
+        flash("Lidl is not configured (set LIDL_ENABLED and LIDL_REFRESH_TOKEN).")
+        return redirect(url_for("index"))
+    imported = ingest.poll_lidl_tickets()
+    flash(f"Lidl poll complete: imported {len(imported)} new receipt(s).")
     return redirect(url_for("index"))
 
 

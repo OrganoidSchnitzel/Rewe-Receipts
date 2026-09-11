@@ -15,6 +15,11 @@
       <form action="{{ url_for('manual_poll') }}" method="post" class="inline">
         <button type="submit" class="link-btn">Poll Paperless</button>
       </form>
+      {% if lidl_enabled %}
+      <form action="{{ url_for('manual_poll_lidl') }}" method="post" class="inline">
+        <button type="submit" class="link-btn">Poll Lidl</button>
+      </form>
+      {% endif %}
     </nav>
   </header>
   <main class="page">

@@ -38,6 +38,10 @@ PAPERLESS_TOKEN = _get("PAPERLESS_TOKEN")
 PAPERLESS_REWE_TAG = _get("PAPERLESS_REWE_TAG", "Rewe")
 # Shared secret the Paperless post-consume script must present to the webhook.
 PAPERLESS_WEBHOOK_TOKEN = _get("PAPERLESS_WEBHOOK_TOKEN")
+# After a successful import, tag the Paperless document (non-destructive) so you
+# can tell handled from unhandled receipts in Paperless. Empty tag disables it.
+PAPERLESS_TAG_ON_IMPORT = _get_bool("PAPERLESS_TAG_ON_IMPORT", True)
+PAPERLESS_PROCESSED_TAG = _get("PAPERLESS_PROCESSED_TAG", "ReceiptImported")
 
 # --- Polling scheduler -------------------------------------------------------
 POLL_ENABLED = _get_bool("POLL_ENABLED", True)
@@ -62,13 +66,14 @@ OLLAMA_MODEL = _get("OLLAMA_MODEL", "llama3.1")
 # When false, extraction stays purely deterministic (known-items + regex).
 OLLAMA_ENABLED = _get_bool("OLLAMA_ENABLED", False)
 
-# --- Lidl Plus (ingestion added in a follow-up branch) -----------------------
+# --- Lidl Plus ---------------------------------------------------------------
+# Auth is bootstrapped once, outside the container, with the lidl-plus CLI
+# (`lidl-plus auth`), which prints a refresh token after the OTP step. Paste it
+# here; the service then runs unattended, refreshing access tokens itself.
 LIDL_ENABLED = _get_bool("LIDL_ENABLED", False)
-LIDL_EMAIL = _get("LIDL_EMAIL")
-LIDL_PASSWORD = _get("LIDL_PASSWORD")
+LIDL_REFRESH_TOKEN = _get("LIDL_REFRESH_TOKEN")
 LIDL_COUNTRY = _get("LIDL_COUNTRY", "DE")
 LIDL_LANGUAGE = _get("LIDL_LANGUAGE", "de")
-LIDL_TOKEN_PATH = Path(_get("LIDL_TOKEN_PATH", "/app/data/lidl_token.json"))
 LIDL_POLL_INTERVAL_SECONDS = _get_int("LIDL_POLL_INTERVAL_SECONDS", 3600)
 
 # --- Telegram notifications --------------------------------------------------

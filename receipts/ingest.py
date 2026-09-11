@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from . import config, db, extraction, notifier, paperless
+from . import config, db, extraction, lidl, notifier, paperless
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,14 @@ def ingest_rewe_document(document_id: int) -> Optional[str]:
         document_id, receipt_id, len(items),
     )
 
+    # Non-destructive: tag the Paperless document as processed so handled and
+    # unhandled receipts are distinguishable there (never delete the archive).
+    try:
+        paperless.mark_document_processed(doc)
+    except Exception as exc:
+        logger.warning("Could not tag Paperless document %s as processed: %s",
+                       document_id, exc)
+
     total = round(sum(i.total_price for i in items), 2)
     notifier.notify_new_receipt(receipt_id, "REWE receipt", len(items), total)
     return receipt_id
@@ -100,4 +108,74 @@ def poll_rewe_documents() -> list[str]:
                 imported.append(receipt_id)
         except Exception as exc:
             logger.warning("Failed to ingest document %s: %s", document_id, exc)
+    return imported
+
+
+# --- Lidl --------------------------------------------------------------------
+
+def ingest_lidl_receipt(receipt: "lidl.LidlReceipt") -> Optional[str]:
+    """Store a parsed Lidl receipt, skipping duplicates by external_id."""
+    if db.receipt_exists(receipt.external_id):
+        return None
+    if not receipt.items:
+        logger.info("Lidl receipt %s has no items; skipping", receipt.external_id)
+        return None
+
+    if not lidl.reconciles(receipt):
+        logger.warning(
+            "Lidl receipt %s items sum (%.2f) != ticket total (%.2f); review it",
+            receipt.external_id,
+            sum(i.total_price for i in receipt.items),
+            receipt.total_amount,
+        )
+
+    receipt_id = db.create_receipt(
+        source="lidl",
+        external_id=receipt.external_id,
+        items=receipt.items,
+        purchase_date=receipt.purchase_date,
+        store=receipt.store,
+        total_amount=receipt.total_amount,
+    )
+    if receipt_id is None:
+        return None
+
+    logger.info(
+        "Imported Lidl receipt %s as %s (%d items)",
+        receipt.external_id, receipt_id, len(receipt.items),
+    )
+    notifier.notify_new_receipt(
+        receipt_id, receipt.store or "Lidl receipt",
+        len(receipt.items), receipt.total_amount,
+    )
+    return receipt_id
+
+
+def poll_lidl_tickets() -> list[str]:
+    """Poll the Lidl Plus API and import any tickets not yet seen.
+
+    Every ticket id is checked against existing external_ids (not a last-seen
+    date), so tickets arriving out of order are never missed.
+    """
+    imported: list[str] = []
+    if not lidl.is_configured():
+        return imported
+
+    try:
+        api = lidl._api()
+        ticket_ids = lidl.list_ticket_ids(api)
+    except Exception as exc:
+        logger.warning("Lidl poll failed (auth/list): %s", exc)
+        return imported
+
+    for ticket_id in ticket_ids:
+        if db.receipt_exists(f"lidl:{ticket_id}"):
+            continue
+        try:
+            receipt = lidl.fetch_ticket(ticket_id, api)
+            new_id = ingest_lidl_receipt(receipt)
+            if new_id:
+                imported.append(new_id)
+        except Exception as exc:
+            logger.warning("Failed to ingest Lidl ticket %s: %s", ticket_id, exc)
     return imported

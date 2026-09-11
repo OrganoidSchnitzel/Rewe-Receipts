@@ -8,13 +8,12 @@ lets you review/correct it in a web UI, and creates a matching expense in a
   service is triggered by a Paperless post-consumption webhook (with a polling
   fallback), pulls the OCR text + PDF, and extracts line items.
 * **Lidl** — the Lidl Plus API returns itemized receipts directly (no OCR). The
-  data model and UI already support Lidl; automated Lidl Plus ingestion is a
-  planned follow-up (config is reserved in `.env.example`). You can add a Lidl
-  receipt today via **Manual add** by pasting the API JSON.
+  service polls it on a schedule using the community `lidl-plus` client and
+  feeds tickets into the same data model, UI and Spliit flow (see
+  [Lidl setup](#lidl-setup) for the one-time auth).
 
-This branch delivers the **Rewe pipeline end-to-end** (Paperless → extraction →
-review UI → Spliit), plus the shared data model, duplicate detection, and
-deployment.
+Both pipelines share the data model, duplicate detection, review UI, Spliit
+integration and deployment.
 
 ## How it works
 
@@ -43,6 +42,34 @@ Rewe email ─▶ Paperless-ngx (OCR, tag "Rewe")
 
 The extraction logic lives behind small functions in `receipts/extraction.py`
 so the matching rules and the LLM prompt can be improved independently.
+
+Parsing stops at the `SUMME` (total) line — everything below it (payment, tax,
+cashback/loyalty) is ignored — and quantity/weight breakdown sub-lines
+(`3 Stk x 1,29`) are merged into the item above rather than treated as
+separate articles.
+
+### Paperless documents are kept, not deleted
+
+Imported Rewe documents stay in Paperless (your archive of record, and what
+lets the tool re-import/re-extract later). After a successful import the tool
+adds a non-destructive tag (`PAPERLESS_PROCESSED_TAG`, default
+`ReceiptImported`) so you can filter handled vs. unhandled receipts. Set
+`PAPERLESS_TAG_ON_IMPORT=false` to skip even the tag.
+
+### Lidl setup
+
+Lidl's OTP login can't run headless, so bootstrap the token once on any machine
+with a browser:
+
+```bash
+pipx run "lidl-plus[auth]" auth      # or: pip install "lidl-plus[auth]" && lidl-plus auth
+```
+
+Enter your Lidl account email/password and the OTP; it prints a **refresh
+token**. Put it in `LIDL_REFRESH_TOKEN`, set `LIDL_ENABLED=true`, and the
+service polls Lidl on `LIDL_POLL_INTERVAL_SECONDS` unattended (the container
+only needs the light base `lidl-plus`, no browser). `lidl-plus` is unofficial
+and can break if Lidl changes their API.
 
 ### Duplicate detection
 
@@ -163,8 +190,9 @@ receipts/
   config.py                env-var configuration
   models.py                dataclasses (ExtractedItem, Receipt, …)
   db.py                    SQLite: receipts / items / known_items
-  extraction.py            Lidl mapping + Rewe hybrid extraction + Ollama
-  paperless.py             Paperless-ngx REST client
+  extraction.py            Rewe hybrid extraction + Ollama + manual Lidl JSON
+  lidl.py                  Lidl Plus client + ticket mapping
+  paperless.py             Paperless-ngx REST client (read + processed tag)
   spliit.py                Spliit tRPC client (participants, create expense)
   ingest.py                orchestration + duplicate detection
   notifier.py              Telegram notifications
@@ -175,6 +203,5 @@ scripts/paperless_post_consume.sh   Paperless webhook hook
 
 ## Roadmap
 
-* Automated Lidl Plus API ingestion (login + OTP, persisted refresh token,
-  scheduled fetch) feeding the same data model/UI.
 * Per-expense custom split modes (Spliit supports shares/amount/percentage).
+* Two-way Telegram (inline approve/edit buttons) via an inbound webhook.
