@@ -130,29 +130,114 @@ def reconciles(receipt: LidlReceipt) -> bool:
     return abs(sum(i.total_price for i in receipt.items) - receipt.total_amount) <= 0.02
 
 
-# --- API client (lazy import so the lib is only needed at runtime) -----------
+# --- API client --------------------------------------------------------------
+#
+# We use the lidl-plus library ONLY for OAuth token management (its
+# ``_default_headers()`` renews the access token from the refresh token and
+# returns the Bearer + app headers). The actual ticket calls are made ourselves
+# over HTTP/2, because Lidl's API gateway (Istio/Envoy) hangs plain HTTP/1.1
+# requests (which is all `requests`/urllib3 speaks) — it only answers over the
+# HTTP/2 that a real client negotiates. `requests` timing out at exactly the
+# timeout on the authenticated ticket call, while curl (ALPN h2) responds
+# instantly, is the tell.
 
-def _api():
+_TICKET_API = "https://tickets.lidlplus.com/api/v2"
+
+
+def _auth_headers() -> dict[str, str]:
+    """Build the authenticated request headers via lidl-plus's token logic."""
     from lidlplus import LidlPlusApi  # noqa: PLC0415  (lazy: runtime-only dep)
 
-    return LidlPlusApi(
+    api = LidlPlusApi(
         config.LIDL_LANGUAGE,
         config.LIDL_COUNTRY,
         refresh_token=config.LIDL_REFRESH_TOKEN,
     )
+    # Renews the access token from the refresh token and returns Bearer + the
+    # App-Version / Operating-System / App / Accept-Language headers Lidl wants.
+    return dict(api._default_headers())
 
 
-def list_ticket_ids(api: Optional[Any] = None) -> list[str]:
+def open_client():
+    """Open an HTTP/2 client carrying the authenticated headers."""
+    import httpx  # noqa: PLC0415
+
+    return httpx.Client(
+        http2=True,
+        timeout=config.HTTP_TIMEOUT,
+        headers=_auth_headers(),
+        follow_redirects=True,
+    )
+
+
+def _tickets_page(client, page: int) -> dict[str, Any]:
+    url = f"{_TICKET_API}/{config.LIDL_COUNTRY}/tickets"
+    response = client.get(url, params={"pageNumber": page, "onlyFavorite": "false"})
+    response.raise_for_status()
+    return response.json()
+
+
+def list_tickets(client) -> list[dict[str, Any]]:
+    """Return all ticket summaries, following pagination."""
+    first = _tickets_page(client, 1)
+    tickets = list(first.get("tickets") or [])
+    try:
+        size = int(first.get("size") or 0)
+        total = int(first.get("totalCount") or 0)
+    except (TypeError, ValueError):
+        size = total = 0
+    if size > 0 and total > size:
+        last_page = -(-total // size)  # ceil
+        for page in range(2, last_page + 1):
+            tickets += list(_tickets_page(client, page).get("tickets") or [])
+    return tickets
+
+
+def list_ticket_ids(client) -> list[str]:
     """Return the ids of all tickets (newest first, as Lidl returns them)."""
-    api = api or _api()
     ids = []
-    for summary in api.tickets():
+    for summary in list_tickets(client):
         tid = summary.get("id") or summary.get("sequenceNumber")
         if tid is not None:
             ids.append(str(tid))
     return ids
 
 
-def fetch_ticket(ticket_id: str, api: Optional[Any] = None) -> LidlReceipt:
-    api = api or _api()
-    return parse_lidl_ticket(api.ticket(ticket_id))
+def fetch_ticket(ticket_id: str, client) -> LidlReceipt:
+    url = f"{_TICKET_API}/{config.LIDL_COUNTRY}/tickets/{ticket_id}"
+    response = client.get(url)
+    response.raise_for_status()
+    return parse_lidl_ticket(response.json())
+
+
+def diagnose() -> None:
+    """Print a step-by-step connectivity check (run: python -m receipts.lidl)."""
+    import time
+
+    if not config.LIDL_REFRESH_TOKEN:
+        print("LIDL_REFRESH_TOKEN is not set.")
+        return
+    print(f"Country={config.LIDL_COUNTRY} Language={config.LIDL_LANGUAGE}")
+    try:
+        headers = _auth_headers()
+        print("✓ Access token obtained (Authorization header built).")
+    except Exception as exc:
+        print(f"✗ Token step failed: {exc!r}")
+        return
+    try:
+        started = time.monotonic()
+        with open_client() as client:
+            summaries = list_tickets(client)
+        elapsed = time.monotonic() - started
+        print(f"✓ HTTP/2 ticket list OK in {elapsed:.1f}s — {len(summaries)} ticket(s).")
+        if summaries:
+            first = summaries[0]
+            print(f"  newest id={first.get('id')} date={first.get('date')} "
+                  f"total={first.get('totalAmount')}")
+    except Exception as exc:
+        print(f"✗ Ticket list failed: {type(exc).__name__}: {exc}")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    diagnose()

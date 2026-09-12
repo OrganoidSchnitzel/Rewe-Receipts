@@ -162,20 +162,26 @@ def poll_lidl_tickets() -> list[str]:
         return imported
 
     try:
-        api = lidl._api()
-        ticket_ids = lidl.list_ticket_ids(api)
+        client = lidl.open_client()
     except Exception as exc:
-        logger.warning("Lidl poll failed (auth/list): %s", exc)
+        logger.warning("Lidl poll failed (auth): %s", exc)
         return imported
 
-    for ticket_id in ticket_ids:
-        if db.receipt_exists(f"lidl:{ticket_id}"):
-            continue
+    with client:
         try:
-            receipt = lidl.fetch_ticket(ticket_id, api)
-            new_id = ingest_lidl_receipt(receipt)
-            if new_id:
-                imported.append(new_id)
+            ticket_ids = lidl.list_ticket_ids(client)
         except Exception as exc:
-            logger.warning("Failed to ingest Lidl ticket %s: %s", ticket_id, exc)
+            logger.warning("Lidl poll failed (ticket list): %s", exc)
+            return imported
+
+        for ticket_id in ticket_ids:
+            if db.receipt_exists(f"lidl:{ticket_id}"):
+                continue
+            try:
+                receipt = lidl.fetch_ticket(ticket_id, client)
+                new_id = ingest_lidl_receipt(receipt)
+                if new_id:
+                    imported.append(new_id)
+            except Exception as exc:
+                logger.warning("Failed to ingest Lidl ticket %s: %s", ticket_id, exc)
     return imported
