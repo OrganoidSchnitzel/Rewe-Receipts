@@ -100,6 +100,25 @@ def receipt_file(receipt_id: str):
     return send_file(receipt.file_path)
 
 
+@app.post("/receipts/<receipt_id>/reextract")
+def reextract_receipt(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        abort(404)
+    if receipt.status == "settled":
+        flash("Settled receipts are read-only and can't be re-extracted.")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    try:
+        ok = ingest.reextract_receipt(receipt_id)
+    except Exception as exc:
+        logger.exception("Re-extract failed")
+        flash(f"Re-extract failed: {exc}")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    flash("Items re-extracted from source." if ok
+          else "This receipt has no live source to re-extract from.")
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
 @app.post("/receipts/<receipt_id>/delete")
 def delete_receipt(receipt_id: str):
     external_id = db.delete_receipt(receipt_id)

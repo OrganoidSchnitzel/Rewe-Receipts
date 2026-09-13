@@ -225,6 +225,14 @@ table.items tbody tr.excluded { opacity: 0.6; }
   margin-bottom: 0.6rem;
 }
 
+.footer-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 1.25rem;
+  margin-top: 0.25rem;
+}
 .delete-form { grid-column: 1 / -1; text-align: right; margin-top: 0.25rem; }
 .danger-link { background: none; border: 0; color: var(--danger); font-weight: 600; padding: 0.3rem 0.2rem; font-size: 0.85rem; }
 .danger-link:hover { background: none; text-decoration: underline; }

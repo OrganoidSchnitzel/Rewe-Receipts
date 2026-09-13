@@ -185,3 +185,90 @@ def poll_lidl_tickets() -> list[str]:
             except Exception as exc:
                 logger.warning("Failed to ingest Lidl ticket %s: %s", ticket_id, exc)
     return imported
+
+
+# --- Re-extraction -----------------------------------------------------------
+
+def _items_to_rows(items) -> list[dict]:
+    return [
+        {
+            "name": i.name,
+            "quantity": i.quantity,
+            "unit_price": i.unit_price,
+            "total_price": i.total_price,
+            "included": True,
+            "source_method": i.source_method,
+            "raw_line": i.raw_line,
+        }
+        for i in items
+    ]
+
+
+def reextract_receipt(receipt_id: str, lidl_client=None) -> bool:
+    """Re-run extraction for a receipt from its source and replace its items.
+
+    Used to apply improved parsing to receipts imported by an earlier build.
+    Settled receipts and manual entries (no live source) are left untouched.
+    Returns True if the receipt's items were refreshed.
+    """
+    receipt = db.get_receipt(receipt_id)
+    if not receipt or receipt.status == "settled":
+        return False
+
+    source_ref = receipt.external_id.split(":", 1)
+    if len(source_ref) != 2:
+        return False
+    ref = source_ref[1]
+
+    if receipt.source == "rewe":
+        text = paperless.get_document_text(int(ref))
+        items = extraction.extract_rewe_items(text, known_items=db.get_known_items())
+        db.replace_items(receipt_id, _items_to_rows(items))
+        return True
+
+    if receipt.source == "lidl":
+        if not lidl.is_configured():
+            return False
+        client = lidl_client or lidl.open_client()
+        try:
+            parsed = lidl.fetch_ticket(ref, client)
+        finally:
+            if lidl_client is None:
+                client.close()
+        db.replace_items(receipt_id, _items_to_rows(parsed.items))
+        return True
+
+    return False  # manual receipts have no source to re-fetch
+
+
+def reextract_all() -> tuple[int, int]:
+    """Re-extract every pending receipt from source. Returns (updated, skipped).
+
+    Opens a single Lidl client for all Lidl receipts so the token is renewed
+    once rather than per receipt.
+    """
+    updated = skipped = 0
+    receipts = db.list_receipts()
+    lidl_client = None
+    if lidl.is_configured() and any(
+        r.source == "lidl" and r.status != "settled" for r in receipts
+    ):
+        try:
+            lidl_client = lidl.open_client()
+        except Exception as exc:
+            logger.warning("Could not open Lidl client for re-extract: %s", exc)
+
+    try:
+        for receipt in receipts:
+            try:
+                if reextract_receipt(receipt.id, lidl_client=lidl_client):
+                    updated += 1
+                else:
+                    skipped += 1
+            except Exception as exc:
+                logger.warning("Re-extract failed for %s: %s", receipt.id, exc)
+                skipped += 1
+    finally:
+        if lidl_client is not None:
+            lidl_client.close()
+    return updated, skipped
