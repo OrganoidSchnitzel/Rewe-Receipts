@@ -256,22 +256,46 @@ def diagnose() -> None:
                 print("  (No tickets on this account yet — nothing to import.)")
                 return
 
-            tid = str(summaries[0].get("id") or summaries[0].get("sequenceNumber"))
-            detail = fetch_ticket_raw(tid, client)
+            summary = summaries[0]
+            print("\n-- Newest ticket SUMMARY object --")
+            print("keys:", sorted(summary.keys()))
+            print("values:", summary)
+
+            tid = str(summary.get("id") or summary.get("sequenceNumber"))
+            country = config.LIDL_COUNTRY
+            # Probe detail-URL variants; print status + short body for each.
+            variants = [
+                f"{_TICKET_API}/{country}/tickets/{tid}",
+                f"{_TICKET_API}/{country}/tickets/{tid}?ticketNumber={tid}",
+                f"{_TICKET_API}/{country}/tickets/detail/{tid}",
+                f"https://tickets.lidlplus.com/api/v1/{country}/tickets/{tid}",
+            ]
+            print("\n-- Detail endpoint probes --")
+            detail = None
+            for url in variants:
+                try:
+                    resp = client.get(url)
+                    body = resp.text[:300].replace("\n", " ")
+                    print(f"[{resp.status_code}] {url}\n        {body}")
+                    if resp.status_code == 200 and detail is None:
+                        detail = resp.json()
+                except Exception as exc:
+                    print(f"[ERR] {url} -> {type(exc).__name__}: {exc}")
     except Exception as exc:
         print(f"✗ Ticket call failed: {type(exc).__name__}: {exc}")
         return
 
-    print(f"\n-- Newest ticket detail (id={tid}) --")
+    if detail is None:
+        print("\n⚠ No detail variant returned 200 — see the statuses/bodies above.")
+        return
+
+    print("\n-- Detail shape (first working variant) --")
     print("top-level keys:", sorted(detail.keys()))
     items_key = next((k for k in _ITEM_LIST_KEYS if isinstance(detail.get(k), list)), None)
     print("items key found:", items_key)
-    if items_key:
-        items = detail[items_key]
-        print(f"item count: {len(items)}")
-        if items:
-            print("first item keys:", sorted(items[0].keys()))
-            print("first item:", items[0])
+    if items_key and detail[items_key]:
+        print("first item keys:", sorted(detail[items_key][0].keys()))
+        print("first item:", detail[items_key][0])
 
     parsed = parse_lidl_ticket(detail)
     print(f"\nparsed by current mapping -> {len(parsed.items)} item(s), "
