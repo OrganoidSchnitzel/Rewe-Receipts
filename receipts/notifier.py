@@ -16,7 +16,9 @@ break ingestion.
 """
 from __future__ import annotations
 
+import html
 import logging
+from typing import Optional
 
 import requests
 
@@ -44,7 +46,7 @@ def send_message(text: str) -> bool:
             json={
                 "chat_id": config.TELEGRAM_CHAT_ID,
                 "text": text,
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             },
             timeout=config.HTTP_TIMEOUT,
@@ -56,18 +58,32 @@ def send_message(text: str) -> bool:
         return False
 
 
+def _esc(text: str) -> str:
+    """Escape the characters Telegram's HTML parse mode cares about."""
+    return html.escape(str(text), quote=False)
+
+
 def notify_new_receipt(
-    receipt_id: str, store: str, item_count: int, total_amount: float
+    receipt_id: str,
+    store: str,
+    item_count: int,
+    total_amount: float,
+    top_items: Optional[list[str]] = None,
 ) -> None:
     """Notify that a freshly imported receipt is ready to review."""
     if not is_configured():
         return
 
     lines = [
-        f"🧾 *New {store or 'receipt'} ready to review*",
-        f"{item_count} item(s) · €{total_amount:.2f}",
+        f"🧾 <b>New {_esc(store or 'receipt')}</b> · ready to review",
+        f"{item_count} item{'' if item_count == 1 else 's'} · €{total_amount:.2f}",
     ]
+    if top_items:
+        preview = ", ".join(_esc(name) for name in top_items[:5])
+        if len(top_items) > 5:
+            preview += f", +{len(top_items) - 5} more"
+        lines.append(f"<i>{preview}</i>")
     if config.APP_PUBLIC_URL:
         link = f"{config.APP_PUBLIC_URL}/receipts/{receipt_id}"
-        lines.append(f"[Open receipt]({link})")
+        lines.append(f'<a href="{_esc(link)}">Open receipt →</a>')
     send_message("\n".join(lines))
