@@ -145,6 +145,9 @@ Only presses from `TELEGRAM_CHAT_ID` are honored, and the action is idempotent
 (an already-settled receipt is never charged twice). Set `TELEGRAM_TWO_WAY=false`
 for notification-only.
 
+📖 **Full step-by-step setup:** [docs/TELEGRAM.md](docs/TELEGRAM.md) — creating
+the bot, getting your chat id, config, testing, and troubleshooting.
+
 ## Configuration
 
 All config is via environment variables — see [`.env.example`](.env.example)
