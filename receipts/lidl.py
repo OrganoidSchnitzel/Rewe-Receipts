@@ -214,8 +214,12 @@ def list_ticket_ids(client) -> list[str]:
     return ids
 
 
+# The ticket LIST is served by API v2; a single ticket's DETAIL by API v3.
+_TICKET_DETAIL_API = "https://tickets.lidlplus.com/api/v3"
+
+
 def fetch_ticket_raw(ticket_id: str, client) -> dict[str, Any]:
-    url = f"{_TICKET_API}/{config.LIDL_COUNTRY}/tickets/{ticket_id}"
+    url = f"{_TICKET_DETAIL_API}/{config.LIDL_COUNTRY}/tickets/{ticket_id}"
     response = client.get(url)
     response.raise_for_status()
     return response.json()
@@ -262,46 +266,38 @@ def diagnose() -> None:
             print("values:", summary)
 
             tid = str(summary.get("id") or summary.get("sequenceNumber"))
-            country = config.LIDL_COUNTRY
-            # Probe detail-URL variants; print status + short body for each.
-            variants = [
-                f"{_TICKET_API}/{country}/tickets/{tid}",
-                f"{_TICKET_API}/{country}/tickets/{tid}?ticketNumber={tid}",
-                f"{_TICKET_API}/{country}/tickets/detail/{tid}",
-                f"https://tickets.lidlplus.com/api/v1/{country}/tickets/{tid}",
-            ]
-            print("\n-- Detail endpoint probes --")
-            detail = None
-            for url in variants:
-                try:
-                    resp = client.get(url)
-                    body = resp.text[:300].replace("\n", " ")
-                    print(f"[{resp.status_code}] {url}\n        {body}")
-                    if resp.status_code == 200 and detail is None:
-                        detail = resp.json()
-                except Exception as exc:
-                    print(f"[ERR] {url} -> {type(exc).__name__}: {exc}")
+            detail = fetch_ticket_raw(tid, client)  # API v3
     except Exception as exc:
-        print(f"✗ Ticket call failed: {type(exc).__name__}: {exc}")
+        print(f"✗ Ticket detail (v3) failed: {type(exc).__name__}: {exc}")
         return
 
-    if detail is None:
-        print("\n⚠ No detail variant returned 200 — see the statuses/bodies above.")
-        return
-
-    print("\n-- Detail shape (first working variant) --")
+    print(f"\n-- Newest ticket DETAIL (v3, id={tid}) --")
     print("top-level keys:", sorted(detail.keys()))
+
     items_key = next((k for k in _ITEM_LIST_KEYS if isinstance(detail.get(k), list)), None)
-    print("items key found:", items_key)
+    print("structured items key:", items_key)
     if items_key and detail[items_key]:
         print("first item keys:", sorted(detail[items_key][0].keys()))
         print("first item:", detail[items_key][0])
+
+    html = detail.get("htmlPrintedReceipt") or detail.get("html") or ""
+    if isinstance(html, str) and html:
+        import re
+        attrs = sorted(set(re.findall(r'(data-[\w-]+)=', html)))
+        classes = sorted(set(re.findall(r'class="([\w ]+)"', html)))[:20]
+        print(f"\nhtmlPrintedReceipt present ({len(html)} chars)")
+        print("data-* attributes used:", attrs)
+        print("span classes used:", classes)
+        # One article span verbatim (item name/price — from your own receipt).
+        m = re.search(r'<span[^>]*class="[^"]*article[^"]*"[^>]*>', html)
+        if m:
+            print("sample article span:", m.group(0))
 
     parsed = parse_lidl_ticket(detail)
     print(f"\nparsed by current mapping -> {len(parsed.items)} item(s), "
           f"total €{parsed.total_amount:.2f}, reconciles={reconciles(parsed)}")
     if not parsed.items:
-        print("⚠ 0 items parsed — the item mapping needs the real keys above.")
+        print("⚠ 0 items parsed — mapping needs updating for the shape above.")
 
 
 if __name__ == "__main__":
