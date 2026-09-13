@@ -86,6 +86,10 @@ LIDL_USER_AGENT = _get("LIDL_USER_AGENT")
 TELEGRAM_ENABLED = _get_bool("TELEGRAM_ENABLED", False)
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID")
+# Two-way: show an "Approve & split" button on notifications and act on presses
+# via long-polling (no inbound webhook / exposed port needed). Only presses from
+# TELEGRAM_CHAT_ID are honored.
+TELEGRAM_TWO_WAY = _get_bool("TELEGRAM_TWO_WAY", True)
 
 # --- Web server --------------------------------------------------------------
 APP_HOST = _get("APP_HOST", "0.0.0.0")

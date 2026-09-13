@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from . import config, ingest, lidl
+from . import config, ingest, lidl, telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,10 @@ def start() -> None:
     else:
         logger.info("Lidl polling disabled (LIDL_ENABLED / LIDL_REFRESH_TOKEN unset)")
 
+    # Two-way Telegram runs its own long-poll loop (not interval-based).
+    telegram_bot.start()
+
 
 def stop() -> None:
     _stop.set()
+    telegram_bot.stop()

@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 
-from receipts import config, db, extraction, ingest, lidl, scheduler, spliit
+from receipts import config, db, extraction, ingest, lidl, scheduler
 from receipts.extraction import normalize_line
 
 logging.basicConfig(level=logging.INFO)
@@ -155,35 +155,13 @@ def create_spliit_expense(receipt_id: str):
     items = _parse_items_from_form()
     if items:
         db.replace_items(receipt_id, items)
-        receipt = db.get_receipt(receipt_id)
-
-    included = [i for i in receipt.items if i.included]
-    if not included:
-        flash("Select at least one item before creating an expense.")
-        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 
     # Learning loop: remember confirmed AI-parsed lines so they are matched
     # deterministically next time.
     _learn_from_form(items)
 
-    total = round(sum(i.total_price for i in included), 2)
-    date_part = (receipt.purchase_date or "")[:10]
-    title = f"{receipt.store or receipt.source.upper()} {date_part}".strip()
-
-    try:
-        expense_id = spliit.create_expense(
-            title=title or "Receipt",
-            amount_eur=total,
-            notes=f"{len(included)} items imported from {receipt.source} receipt",
-            expense_date=receipt.purchase_date,
-        )
-    except Exception as exc:
-        logger.exception("Spliit expense creation failed")
-        flash(f"Spliit expense creation failed: {exc}")
-        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
-
-    db.mark_settled(receipt_id, expense_id)
-    flash(f"Created Spliit expense {expense_id} for €{total:.2f}.")
+    ok, message = ingest.settle_receipt(receipt_id)
+    flash(message)
     return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 
 
