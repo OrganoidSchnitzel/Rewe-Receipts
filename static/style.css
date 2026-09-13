@@ -99,9 +99,8 @@ code { background: var(--surface-2); padding: 0.08rem 0.35rem; border-radius: 6p
 .brand { display: inline-flex; align-items: center; gap: 0.55rem; color: var(--text); font-weight: 700; }
 .brand:hover { text-decoration: none; }
 .brand-mark {
-  display: grid; place-items: center;
-  width: 32px; height: 32px; border-radius: 9px;
-  background: var(--primary-soft); font-size: 1.05rem;
+  width: 30px; height: 30px; border-radius: 8px; display: block;
+  box-shadow: var(--shadow-sm);
 }
 .brand-name { letter-spacing: -0.01em; }
 .nav { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; flex-wrap: wrap; }
@@ -174,28 +173,49 @@ code { background: var(--surface-2); padding: 0.08rem 0.35rem; border-radius: 6p
 
 /* --- Receipt list --------------------------------------------------------- */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; flex-wrap: wrap; }
+.head-right { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
 .count-chip {
   background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
   padding: 0.35rem 0.85rem; font-size: 0.82rem; color: var(--muted); font-weight: 600;
   box-shadow: var(--shadow-sm); white-space: nowrap;
 }
-.receipt-grid {
-  display: grid; gap: 0.9rem;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+.view-toggle {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 9px;
+  overflow: hidden; background: var(--surface); box-shadow: var(--shadow-sm);
 }
+.vt-btn {
+  display: grid; place-items: center; background: transparent; border: 0;
+  padding: 0.4rem 0.6rem; cursor: pointer; color: var(--muted);
+}
+.vt-btn + .vt-btn { border-left: 1px solid var(--border); }
+.vt-btn:hover { color: var(--text); }
+.vt-btn[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); }
+
 .receipt-card {
-  display: flex; flex-direction: column; gap: 0.5rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 1rem 1.1rem; box-shadow: var(--shadow-sm); color: var(--text);
+  box-shadow: var(--shadow-sm); color: var(--text);
   transition: transform .12s, box-shadow .12s, border-color .12s;
 }
 .receipt-card:hover { text-decoration: none; transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
-.rc-top { display: flex; align-items: center; justify-content: space-between; }
 .rc-store { font-weight: 700; font-size: 1.05rem; letter-spacing: -0.01em; }
-.rc-date { color: var(--muted); font-size: 0.82rem; margin-top: -0.2rem; }
-.rc-foot { display: flex; align-items: baseline; justify-content: space-between; margin-top: 0.4rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
-.rc-items { color: var(--muted); font-size: 0.85rem; }
-.rc-total { font-weight: 800; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.rc-sub { color: var(--muted); font-size: 0.82rem; }
+.rc-total { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* Grid view: cards in a responsive grid */
+.receipt-view[data-view="grid"] { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.receipt-view[data-view="grid"] .receipt-card { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem 1.1rem; min-height: 120px; }
+.receipt-view[data-view="grid"] .badge { align-self: flex-start; }
+.receipt-view[data-view="grid"] .rc-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.receipt-view[data-view="grid"] .rc-total { font-size: 1.15rem; }
+
+/* List view: full-width horizontal rows */
+.receipt-view[data-view="list"] { display: flex; flex-direction: column; gap: 0.5rem; }
+.receipt-view[data-view="list"] .receipt-card { display: flex; align-items: center; gap: 1rem; padding: 0.7rem 1rem; }
+.receipt-view[data-view="list"] .badge { flex: none; width: 3.2rem; text-align: center; }
+.receipt-view[data-view="list"] .rc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.receipt-view[data-view="list"] .rc-store { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.receipt-view[data-view="list"] .rc-foot { display: flex; align-items: center; gap: 1rem; }
+.receipt-view[data-view="list"] .rc-total { font-size: 1.05rem; min-width: 5rem; text-align: right; }
 
 .empty { text-align: center; padding: 3.5rem 1rem; }
 .empty-icon { font-size: 2.6rem; }
@@ -290,7 +310,7 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
   .app-header-inner { width: 100%; padding-left: 0.9rem; padding-right: 0.9rem; }
   h1 { font-size: 1.35rem; }
   .card-pad { padding: 1rem; border-radius: 12px; }
-  .receipt-grid { grid-template-columns: 1fr; }
+  .receipt-view[data-view="grid"] { grid-template-columns: 1fr; }
   .dh-total { text-align: left; }
   .detail-header { gap: 0.4rem; }
   /* Comfortable tap targets */

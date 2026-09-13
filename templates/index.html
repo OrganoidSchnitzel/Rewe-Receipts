@@ -11,25 +11,35 @@
         poller. Or <a href="{{ url_for('manual_form') }}">add one manually</a>.
       </p>
     </div>
-    {% if receipts %}
-      <div class="count-chip">{{ receipts|length }} total ·
-        {{ receipts|selectattr('status', 'equalto', 'pending')|list|length }} pending</div>
-    {% endif %}
+    <div class="head-right">
+      {% if receipts %}
+        <div class="count-chip">{{ receipts|length }} total ·
+          {{ receipts|selectattr('status', 'equalto', 'pending')|list|length }} pending</div>
+        <div class="view-toggle" role="group" aria-label="View mode">
+          <button type="button" class="vt-btn" data-view="list" aria-pressed="true" title="List view">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2 3h12v2H2zM2 7h12v2H2zM2 11h12v2H2z"/></svg>
+          </button>
+          <button type="button" class="vt-btn" data-view="grid" aria-pressed="false" title="Grid view">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>
+          </button>
+        </div>
+      {% endif %}
+    </div>
   </div>
 
   {% if receipts %}
-    <div class="receipt-grid">
+    <div class="receipt-view" id="receipt-view" data-view="list">
       {% for receipt in receipts %}
       <a class="receipt-card" href="{{ url_for('receipt_detail', receipt_id=receipt.id) }}">
-        <div class="rc-top">
-          <span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span>
-          <span class="pill pill-{{ receipt.status }}">{{ receipt.status }}</span>
+        <span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span>
+        <div class="rc-body">
+          <span class="rc-store">{{ receipt.store or receipt.source|upper }}</span>
+          <span class="rc-sub">{{ (receipt.purchase_date or receipt.created_at)[:10] }} ·
+            {{ receipt.item_count }} item{{ '' if receipt.item_count == 1 else 's' }}</span>
         </div>
-        <div class="rc-store">{{ receipt.store or receipt.source|upper }}</div>
-        <div class="rc-date">{{ (receipt.purchase_date or receipt.created_at)[:10] }}</div>
         <div class="rc-foot">
-          <span class="rc-items">{{ receipt.item_count }} item{{ '' if receipt.item_count == 1 else 's' }}</span>
           <span class="rc-total">€{{ "%.2f"|format(receipt.total_amount) }}</span>
+          <span class="pill pill-{{ receipt.status }}">{{ receipt.status }}</span>
         </div>
       </a>
       {% endfor %}
@@ -43,4 +53,27 @@
       <a class="btn btn-primary" href="{{ url_for('manual_form') }}">Add a receipt</a>
     </div>
   {% endif %}
+
+  <script>
+    (function () {
+      const view = document.getElementById('receipt-view');
+      const btns = document.querySelectorAll('.vt-btn');
+      if (!view || !btns.length) return;
+      let saved = 'list';
+      try { saved = localStorage.getItem('receiptView') || 'list'; } catch (e) {}
+      apply(saved);
+      btns.forEach(function (b) {
+        b.addEventListener('click', function () {
+          apply(b.dataset.view);
+          try { localStorage.setItem('receiptView', b.dataset.view); } catch (e) {}
+        });
+      });
+      function apply(mode) {
+        view.dataset.view = mode;
+        btns.forEach(function (b) {
+          b.setAttribute('aria-pressed', b.dataset.view === mode ? 'true' : 'false');
+        });
+      }
+    })();
+  </script>
 {% endblock %}
