@@ -3,26 +3,38 @@ import unittest
 from receipts.lidl import parse_amount, parse_lidl_html, parse_lidl_ticket, reconciles
 
 
-# A realistic German v3 htmlPrintedReceipt fragment (article spans only).
-SAMPLE_HTML = """
-<div class="purchase_list">
-  <span id="purchase_list_line_1" class="article css_bold" data-art-id="0080000"
-        data-art-quantity="0,638" data-unit-price="1,29" data-tax-type="A"
-        data-art-description="Banane lose">Banane lose</span>
-  <span id="purchase_list_line_2" class="article" data-art-id="0011111"
-        data-art-quantity="2" data-unit-price="0,95" data-tax-type="A"
-        data-art-description="Milch 3,5%">Milch 3,5%</span>
-  <span id="purchase_list_line_3" class="article" data-art-id="0022222"
-        data-art-quantity="1" data-unit-price="1,49" data-tax-type="A"
-        data-art-description="Brot">Brot</span>
-  <span id="summary_total" class="article" data-art-description="ignore me">x</span>
-</div>
+# A realistic German v3 htmlPrintedReceipt block: each visual line is a group of
+# spans sharing a purchase_list_line id; article lines carry data-art-*, and the
+# discount lines that follow hold a negative amount to subtract.
+_BLOCK = """
+<span id="purchase_list_line_2" class="article css_bold" data-art-id="0080000"
+      data-art-quantity="0,638" data-unit-price="1,29" data-tax-type="A"
+      data-art-description="Banane lose">Banane lose</span><span
+      id="purchase_list_line_2" class="currency css_bold">0,82</span>
+<span id="purchase_list_line_3" class="article css_bold" data-art-id="0080000"
+      data-art-quantity="0,638" data-unit-price="1,29" data-tax-type="A"
+      data-art-description="Banane lose">0,638 kg x 1,29 EUR/kg</span>
+<span id="purchase_list_line_4" class="discount css_bold"
+      data-promotion-id="PROMO-1">Lidl Plus Rabatt</span><span
+      id="purchase_list_line_4" class="discount css_bold">-0,04</span>
+<span id="purchase_list_line_5" class="article css_bold" data-art-id="0090000"
+      data-art-quantity="1" data-unit-price="3,69" data-tax-type="A"
+      data-art-description="Orangen">Orangen</span>
+<span id="purchase_list_line_6">Preisvorteil</span><span
+      id="purchase_list_line_6">-0,10</span>
+<span id="purchase_list_line_7" class="discount css_bold"
+      data-promotion-id="PROMO-1">Lidl Plus Rabatt</span><span
+      id="purchase_list_line_7" class="discount css_bold">-0,20</span>
 """
+
+# The real HTML repeats the block; the parser must use only the first copy.
+SAMPLE_HTML = f'<div class="purchase_list">{_BLOCK}{_BLOCK}</div>'
 
 HTML_TICKET = {
     "id": "23001771842026091273976",
     "date": "2026-09-12T15:33:28+00:00",
-    "totalAmount": 3.72,  # 0.82 + 1.90 + 1.49 = 4.21, minus 0.49 coupon
+    # Banane 0.82-0.04=0.78 ; Orangen 3.69-0.10-0.20=3.39 ; sum 4.17
+    "totalAmount": 4.17,
     "store": {"name": "Hamburg", "locality": "Hamburg"},
     "htmlPrintedReceipt": SAMPLE_HTML,
 }
@@ -129,43 +141,36 @@ class ParseTicketTests(unittest.TestCase):
 
 
 class HtmlTicketTests(unittest.TestCase):
-    def test_parses_article_spans_only(self) -> None:
+    def test_deduplicates_and_uses_first_block_only(self) -> None:
+        # The block is repeated; only two distinct items must come out.
         items = parse_lidl_html(SAMPLE_HTML)
-        # The non purchase_list span ("summary_total") is excluded.
-        self.assertEqual(["Banane lose", "Milch 3,5%", "Brot"], [i.name for i in items])
+        self.assertEqual(["Banane lose", "Orangen"], [i.name for i in items])
 
-    def test_deduplicates_repeated_render_copies(self) -> None:
-        # Lidl's HTML repeats each purchase line across render copies.
-        doubled = SAMPLE_HTML + SAMPLE_HTML
-        items = parse_lidl_html(doubled)
-        self.assertEqual(["Banane lose", "Milch 3,5%", "Brot"], [i.name for i in items])
-
-    def test_weight_line_total_is_qty_times_unit(self) -> None:
-        items = parse_lidl_html(SAMPLE_HTML)
-        banane = items[0]
+    def test_weight_line_net_after_discount(self) -> None:
+        banane = parse_lidl_html(SAMPLE_HTML)[0]
         self.assertEqual(0.638, banane.quantity)
-        self.assertEqual(1.29, banane.unit_price)
-        self.assertEqual(0.82, banane.total_price)  # 0.638 * 1.29
+        self.assertEqual(1.29, banane.unit_price)  # gross unit (per kg) retained
+        self.assertEqual(0.78, banane.total_price)  # 0.82 gross - 0.04 discount
 
-    def test_count_line_total(self) -> None:
-        milch = parse_lidl_html(SAMPLE_HTML)[1]
-        self.assertEqual(2.0, milch.quantity)
-        self.assertEqual(1.90, milch.total_price)  # 2 * 0.95
+    def test_multiple_discounts_on_one_item(self) -> None:
+        orangen = parse_lidl_html(SAMPLE_HTML)[1]
+        # 3.69 gross - 0.10 Preisvorteil - 0.20 Lidl Plus = 3.39
+        self.assertEqual(3.39, orangen.total_price)
 
-    def test_ticket_adds_reducing_coupon_line_to_reconcile(self) -> None:
+    def test_ticket_reconciles_without_residual_line(self) -> None:
         r = parse_lidl_ticket(HTML_TICKET)
         self.assertEqual("lidl:23001771842026091273976", r.external_id)
-        self.assertEqual(3.72, r.total_amount)
-        # gross 0.82 + 1.90 + 1.49 = 4.21; coupon line = -(4.21 - 3.72) = -0.49
-        self.assertEqual("Rabatt / Coupons", r.items[-1].name)
-        self.assertEqual(-0.49, r.items[-1].total_price)
+        self.assertEqual(4.17, r.total_amount)
+        self.assertEqual(["Banane lose", "Orangen"], [i.name for i in r.items])
         self.assertTrue(reconciles(r))
         self.assertEqual("Lidl Hamburg", r.store)
 
-    def test_no_coupon_line_when_already_reconciled(self) -> None:
-        ticket = dict(HTML_TICKET, totalAmount=4.21)
+    def test_residual_line_added_only_if_unreconciled(self) -> None:
+        # Pretend the paid total is lower than the itemized net (missed discount).
+        ticket = dict(HTML_TICKET, totalAmount=4.00)
         r = parse_lidl_ticket(ticket)
-        self.assertEqual(3, len(r.items))  # no adjustment line
+        self.assertEqual("Weitere Rabatte", r.items[-1].name)
+        self.assertEqual(-0.17, r.items[-1].total_price)  # 4.17 - 4.00
         self.assertTrue(reconciles(r))
 
 

@@ -21,6 +21,7 @@ the summed item lines don't reconcile with the ticket's own total).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Optional
@@ -70,73 +71,120 @@ def _store_name(store: Any) -> str:
     return "Lidl"
 
 
-class _LidlArticleParser(HTMLParser):
-    """Collect the article <span> data attributes from a Lidl HTML receipt."""
+class _LidlReceiptParser(HTMLParser):
+    """Group a Lidl HTML receipt into ordered visual lines (article + discount)."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.articles: list[dict[str, str]] = []
+        # Ordered visual lines; spans sharing a purchase_list_line id are merged.
+        self.lines: list[dict[str, Any]] = []
+        self._active: Optional[dict[str, Any]] = None
+        self._last_num = 0
+        self._done = False
+
+    @staticmethod
+    def _line_num(span_id: str) -> Optional[int]:
+        match = re.search(r"purchase_list_line_(\d+)", span_id or "")
+        return int(match.group(1)) if match else None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
-        if tag != "span":
+        if self._done or tag != "span":
             return
         attr = {k: (v or "") for k, v in attrs}
-        css = attr.get("class", "")
-        # Only real purchase lines (not summary/return copies of the same span).
-        if "article" in css and attr.get("data-art-description") \
-                and attr.get("id", "").startswith("purchase_list_line"):
-            self.articles.append(attr)
+        num = self._line_num(attr.get("id", ""))
+        if num is None:
+            self._active = None
+            return
+
+        if self._active is None or num != self._active["num"]:
+            # A lower line number than the last means the block repeats — stop.
+            if self._last_num and num < self._last_num:
+                self._done = True
+                self._active = None
+                return
+            self._last_num = num
+            self._active = {
+                "num": num,
+                "class": attr.get("class", ""),
+                "desc": attr.get("data-art-description", ""),
+                "art_id": attr.get("data-art-id", ""),
+                "qty": attr.get("data-art-quantity", ""),
+                "unit": attr.get("data-unit-price", ""),
+                "tax": attr.get("data-tax-type", ""),
+                "text": "",
+            }
+            self.lines.append(self._active)
+        else:
+            # Same visual line: fill in article attributes if a later span has them.
+            if not self._active["desc"] and attr.get("data-art-description"):
+                self._active.update(
+                    desc=attr["data-art-description"],
+                    art_id=attr.get("data-art-id", ""),
+                    qty=attr.get("data-art-quantity", ""),
+                    unit=attr.get("data-unit-price", ""),
+                    tax=attr.get("data-tax-type", ""),
+                )
+            if "article" in attr.get("class", "") and "article" not in self._active["class"]:
+                self._active["class"] += " article"
+
+    def handle_data(self, data: str) -> None:
+        if self._active is not None and not self._done:
+            self._active["text"] += data
+
+
+_NEG_AMOUNT_RE = re.compile(r"-\d+[.,]\d{2}")
 
 
 def parse_lidl_html(html: str) -> list[ExtractedItem]:
-    """Parse item lines from a Lidl v3 ``htmlPrintedReceipt`` (DE format).
+    """Parse net-per-item lines from a Lidl v3 ``htmlPrintedReceipt`` (DE).
 
-    Each article span carries ``data-art-description``, ``data-art-quantity``
-    and ``data-unit-price`` (comma decimals); the line total is quantity ×
-    unit price (weight lines have a fractional quantity, e.g. 0,638 kg).
+    Each visual receipt line is a group of spans sharing a ``purchase_list_line``
+    id. Article lines carry ``data-art-*`` (gross = quantity × unit price);
+    the discount lines that follow (``Lidl Plus Rabatt``, ``Preisvorteil`` …)
+    hold a negative amount, which is subtracted from the article above them so
+    each item shows the price actually paid. Only the first render block is used
+    (the HTML repeats it).
     """
-    parser = _LidlArticleParser()
+    parser = _LidlReceiptParser()
     parser.feed(html)
 
     items: list[ExtractedItem] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for art in parser.articles:
-        # The HTML repeats each purchase line (multiple render copies); collapse
-        # identical spans. Lidl merges genuine repeat purchases into one line
-        # with a higher quantity, so identical lines are always render dupes.
-        key = (
-            art.get("data-art-id", ""),
-            art.get("data-art-description", ""),
-            art.get("data-art-quantity", ""),
-            art.get("data-unit-price", ""),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
+    current: Optional[ExtractedItem] = None
 
-        name = art.get("data-art-description", "").strip()
-        if not name:
-            continue
-        unit_price = parse_amount(art.get("data-unit-price"))
-        qty_raw = art.get("data-art-quantity")
-        if qty_raw:
-            quantity = parse_amount(qty_raw) or 1.0
-            total_price = round(quantity * unit_price, 2)
-        else:
-            quantity = 1.0
-            total_price = unit_price
-        if total_price <= 0:
-            continue
-        items.append(
-            ExtractedItem(
+    for line in parser.lines:
+        is_article = bool(line["desc"]) and "article" in line["class"]
+        if is_article:
+            key = (line["art_id"], line["desc"], line["qty"], line["unit"])
+            if key in seen:
+                continue  # quantity/breakdown sub-line of the current article
+            seen.add(key)
+
+            name = line["desc"].strip()
+            unit_price = parse_amount(line["unit"])
+            if line["qty"]:
+                quantity = parse_amount(line["qty"]) or 1.0
+                total_price = round(quantity * unit_price, 2)
+            else:
+                quantity = 1.0
+                total_price = unit_price
+            if total_price <= 0:
+                current = None
+                continue
+            current = ExtractedItem(
                 name=name,
                 quantity=quantity,
                 unit_price=unit_price,
                 total_price=total_price,
-                category=art.get("data-tax-type") or None,
+                category=line["tax"] or None,
                 source_method="lidl",
             )
-        )
+            items.append(current)
+        elif current is not None:
+            # Discount / price-advantage line: subtract its negative amount(s).
+            for match in _NEG_AMOUNT_RE.findall(line["text"]):
+                current.total_price = round(current.total_price + parse_amount(match), 2)
+
     return items
 
 
@@ -155,15 +203,16 @@ def parse_lidl_ticket(ticket: dict[str, Any]) -> LidlReceipt:
 
     html = ticket.get("htmlPrintedReceipt") or ticket.get("html")
     if isinstance(html, str) and html.strip():
-        items = parse_lidl_html(html)
-        # Coupons/loyalty reduce the paid total below the gross line sum; add one
-        # reducing line so the receipt reconciles (itemized coupons: follow-up).
+        items = parse_lidl_html(html)  # net-per-item (discounts already applied)
+        # Safety net: if some discount markup wasn't itemized and the items still
+        # sum above the paid total, add one residual reducing line so the receipt
+        # reconciles exactly. (For standard receipts this is not needed.)
         if total_amount > 0 and items:
             delta = round(sum(i.total_price for i in items) - total_amount, 2)
             if delta > 0.02:
                 items.append(
                     ExtractedItem(
-                        name="Rabatt / Coupons",
+                        name="Weitere Rabatte",
                         quantity=1.0,
                         unit_price=-delta,
                         total_price=-delta,

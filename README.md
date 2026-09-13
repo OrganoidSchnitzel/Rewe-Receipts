@@ -84,11 +84,15 @@ because of three quirks discovered the hard way:
 2. **v2 list, v3 detail.** The ticket *list* is `GET /api/v2/{country}/tickets`;
    a single ticket's *detail* is `GET /api/v3/{country}/tickets/{id}` (v2 detail
    returns 400).
-3. **HTML receipts.** German ticket detail has no structured `itemsLine` — items
-   live in `htmlPrintedReceipt` as `<span class="article" data-art-description=…
-   data-art-quantity=… data-unit-price=…>`. The HTML repeats each line across
-   render copies, so `parse_lidl_html` dedupes by content. Line total = quantity
-   × unit price; `totalAmount` from the ticket is authoritative.
+3. **HTML receipts.** German ticket detail has no structured `itemsLine` — the
+   receipt is `htmlPrintedReceipt`, where each visual line is a group of spans
+   sharing a `purchase_list_line_N` id. Article lines carry `data-art-*`
+   (gross = quantity × unit price); the discount lines that follow
+   (`Lidl Plus Rabatt`, `Preisvorteil`, coupons) hold a negative amount that is
+   subtracted from the article above them, so each item shows the **net price
+   paid**. The block repeats across render copies, so `parse_lidl_html` reads
+   only the first block; `totalAmount` from the ticket is authoritative and a
+   residual line is added only if something didn't reconcile.
 
 Diagnose connectivity and mapping any time with:
 
