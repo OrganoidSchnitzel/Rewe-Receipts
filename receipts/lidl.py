@@ -381,58 +381,6 @@ def fetch_ticket(ticket_id: str, client) -> LidlReceipt:
 _ITEM_LIST_KEYS = ("itemsLine", "items", "articlesList", "articles", "lineItems")
 
 
-class _BlockDumper(HTMLParser):
-    """Print article/discount/currency spans of the FIRST purchase block only.
-
-    The HTML repeats every line across render copies; we stop at the first
-    already-seen article so the output is one clean block for mapping.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.rows: list[str] = []
-        self._cur: Optional[dict] = None
-        self._seen: set = set()
-        self._done = False
-
-    def handle_starttag(self, tag, attrs):
-        if self._done or tag != "span":
-            return
-        d = {k: (v or "") for k, v in attrs}
-        cls = d.get("class", "")
-        if "article" in cls and d.get("data-art-description") \
-                and d.get("id", "").startswith("purchase_list_line"):
-            key = (d.get("data-art-id"), d.get("data-art-description"),
-                   d.get("data-art-quantity"), d.get("data-unit-price"))
-            if key in self._seen:
-                self._done = True
-                return
-            self._seen.add(key)
-        self._cur = {"class": cls, "promo": d.get("data-promotion-id", ""),
-                     "desc": d.get("data-art-description", ""), "text": ""}
-
-    def handle_data(self, data):
-        if self._cur is not None:
-            self._cur["text"] += data
-
-    def handle_endtag(self, tag):
-        if self._done or tag != "span" or self._cur is None:
-            return
-        cls = self._cur["class"]
-        if any(k in cls for k in ("article", "discount", "currency")):
-            self.rows.append(
-                f"class={cls!r:26} promo={self._cur['promo']!r:8} "
-                f"desc={self._cur['desc']!r:22} text={self._cur['text'].strip()!r}"
-            )
-        self._cur = None
-
-
-def _dump_first_block(html: str) -> list[str]:
-    dumper = _BlockDumper()
-    dumper.feed(html)
-    return dumper.rows
-
-
 def diagnose() -> None:
     """Connectivity + shape check (run: python -m receipts.lidl)."""
     import time
@@ -492,24 +440,6 @@ def diagnose() -> None:
         m = re.search(r'<span[^>]*class="[^"]*article[^"]*"[^>]*>', html)
         if m:
             print("sample article span:", m.group(0))
-
-    if isinstance(html, str) and html:
-        import re
-
-        def window(needle: str, before: int = 220, after: int = 520) -> str:
-            idx = html.find(needle)
-            if idx < 0:
-                return f"(‘{needle}’ not found)"
-            frag = html[max(0, idx - before): idx + after]
-            return re.sub(r"\s+", " ", frag).strip()
-
-        print("\n-- Raw HTML around the first ARTICLE (Banane) --")
-        print("  ", window('data-art-description="Banane'))
-        print("\n-- Raw HTML around the first DISCOUNT span --")
-        print("  ", window('class="discount'))
-        for label in ("Rabatt", "Preisvorteil"):
-            print(f"\n-- Raw HTML around first '{label}' --")
-            print("  ", window(f">{label}", before=120, after=360))
 
     parsed = parse_lidl_ticket(detail)
     print(f"\nparsed -> {len(parsed.items)} item(s), store={parsed.store!r}, "
