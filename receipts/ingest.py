@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from . import config, db, extraction, lidl, notifier, paperless
+from . import config, db, extraction, lidl, notifier, paperless, spliit
 
 logger = logging.getLogger(__name__)
 
@@ -276,3 +276,42 @@ def reextract_all() -> tuple[int, int]:
         if lidl_client is not None:
             lidl_client.close()
     return updated, skipped
+
+
+# --- Settlement (shared by the web UI and the Telegram bot) ------------------
+
+def settle_receipt(receipt_id: str) -> tuple[bool, str]:
+    """Create a Spliit expense for a receipt's currently-included items.
+
+    Returns (ok, message). Idempotent: a receipt already settled is not settled
+    again, so a repeated trigger (e.g. a stale Telegram button press) never
+    creates a duplicate expense.
+    """
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        return False, "Receipt not found."
+    if receipt.status == "settled":
+        return False, "Already settled."
+
+    included = [i for i in receipt.items if i.included]
+    if not included:
+        return False, "No items selected."
+    total = round(sum(i.total_price for i in included), 2)
+    if total <= 0:
+        return False, "Selected total must be positive."
+
+    date_part = (receipt.purchase_date or "")[:10]
+    title = f"{receipt.store or receipt.source.upper()} {date_part}".strip()
+    try:
+        expense_id = spliit.create_expense(
+            title=title or "Receipt",
+            amount_eur=total,
+            notes=f"{len(included)} items imported from {receipt.source} receipt",
+            expense_date=receipt.purchase_date,
+        )
+    except Exception as exc:
+        logger.exception("Spliit expense creation failed")
+        return False, f"Spliit error: {exc}"
+
+    db.mark_settled(receipt_id, expense_id)
+    return True, f"Created Spliit expense for €{total:.2f}."

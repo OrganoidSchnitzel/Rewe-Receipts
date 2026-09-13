@@ -136,6 +136,15 @@ inbound webhook or extra ports. Enable it with `TELEGRAM_ENABLED=true` and set
 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (see `.env.example` for how to get
 them) plus `APP_PUBLIC_URL` so the message links straight to the receipt.
 
+**Two-way (default on).** With `TELEGRAM_TWO_WAY=true` the notification carries
+an **✅ Approve & split** button (plus **✏️ Review** linking to the web UI).
+Pressing Approve creates the Spliit expense for the receipt's items straight
+from the chat. This uses **long-polling** (`getUpdates`) from a background
+thread — still no inbound webhook or exposed port, so it works behind home NAT.
+Only presses from `TELEGRAM_CHAT_ID` are honored, and the action is idempotent
+(an already-settled receipt is never charged twice). Set `TELEGRAM_TWO_WAY=false`
+for notification-only.
+
 ## Configuration
 
 All config is via environment variables — see [`.env.example`](.env.example)
