@@ -75,6 +75,12 @@ LIDL_REFRESH_TOKEN = _get("LIDL_REFRESH_TOKEN")
 LIDL_COUNTRY = _get("LIDL_COUNTRY", "DE")
 LIDL_LANGUAGE = _get("LIDL_LANGUAGE", "de")
 LIDL_POLL_INTERVAL_SECONDS = _get_int("LIDL_POLL_INTERVAL_SECONDS", 3600)
+# The lidl-plus library hard-codes App-Version "999.99.9"; Lidl's WAF now resets
+# requests carrying an impossible version, so we send a realistic one. Bump this
+# when Lidl ships a new app release if calls start failing again.
+LIDL_APP_VERSION = _get("LIDL_APP_VERSION", "15.30.7")
+LIDL_OPERATING_SYSTEM = _get("LIDL_OPERATING_SYSTEM", "iOs")
+LIDL_USER_AGENT = _get("LIDL_USER_AGENT")
 
 # --- Telegram notifications --------------------------------------------------
 TELEGRAM_ENABLED = _get_bool("TELEGRAM_ENABLED", False)

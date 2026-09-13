@@ -145,7 +145,13 @@ _TICKET_API = "https://tickets.lidlplus.com/api/v2"
 
 
 def _auth_headers() -> dict[str, str]:
-    """Build the authenticated request headers via lidl-plus's token logic."""
+    """Build the authenticated request headers via lidl-plus's token logic.
+
+    We reuse the library only for the Bearer token, then overwrite its
+    hard-coded ``App-Version: 999.99.9`` with a realistic one — Lidl's WAF
+    resets requests carrying that impossible version (verified: fake token +
+    999.99.9 → RST_STREAM; realistic version → normal 401).
+    """
     from lidlplus import LidlPlusApi  # noqa: PLC0415  (lazy: runtime-only dep)
 
     api = LidlPlusApi(
@@ -153,9 +159,14 @@ def _auth_headers() -> dict[str, str]:
         config.LIDL_COUNTRY,
         refresh_token=config.LIDL_REFRESH_TOKEN,
     )
-    # Renews the access token from the refresh token and returns Bearer + the
-    # App-Version / Operating-System / App / Accept-Language headers Lidl wants.
-    return dict(api._default_headers())
+    headers = dict(api._default_headers())  # carries the renewed Bearer token
+    headers["App-Version"] = config.LIDL_APP_VERSION
+    headers["Operating-System"] = config.LIDL_OPERATING_SYSTEM
+    headers["App"] = "com.lidl.eci.lidl.plus"
+    headers["Accept-Language"] = config.LIDL_LANGUAGE
+    if config.LIDL_USER_AGENT:
+        headers["User-Agent"] = config.LIDL_USER_AGENT
+    return headers
 
 
 def open_client():
@@ -217,7 +228,8 @@ def diagnose() -> None:
     if not config.LIDL_REFRESH_TOKEN:
         print("LIDL_REFRESH_TOKEN is not set.")
         return
-    print(f"Country={config.LIDL_COUNTRY} Language={config.LIDL_LANGUAGE}")
+    print(f"Country={config.LIDL_COUNTRY} Language={config.LIDL_LANGUAGE} "
+          f"App-Version={config.LIDL_APP_VERSION}")
     try:
         headers = _auth_headers()
         print("✓ Access token obtained (Authorization header built).")
