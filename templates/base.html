@@ -3,30 +3,43 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <title>{% block title %}Receipt Importer{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="{{ url_for('index') }}">🧾 Receipt Importer</a>
-    <nav>
-      <a href="{{ url_for('index') }}">Receipts</a>
-      <a href="{{ url_for('manual_form') }}">Manual add</a>
-      <form action="{{ url_for('manual_poll') }}" method="post" class="inline">
-        <button type="submit" class="link-btn">Poll Paperless</button>
-      </form>
-      {% if lidl_enabled %}
-      <form action="{{ url_for('manual_poll_lidl') }}" method="post" class="inline">
-        <button type="submit" class="link-btn">Poll Lidl</button>
-      </form>
-      {% endif %}
-    </nav>
+  <header class="app-header">
+    <div class="app-header-inner">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark">🧾</span>
+        <span class="brand-name">Receipt Importer</span>
+      </a>
+      <nav class="nav">
+        <a href="{{ url_for('index') }}">Receipts</a>
+        <a href="{{ url_for('manual_form') }}">Add</a>
+        <form action="{{ url_for('manual_poll') }}" method="post" class="nav-form">
+          <button type="submit" class="btn-ghost">Poll Paperless</button>
+        </form>
+        {% if lidl_enabled %}
+        <form action="{{ url_for('manual_poll_lidl') }}" method="post" class="nav-form">
+          <button type="submit" class="btn-ghost">Poll Lidl</button>
+        </form>
+        {% endif %}
+      </nav>
+    </div>
   </header>
+
   <main class="page">
     {% with messages = get_flashed_messages() %}
       {% if messages %}
-        <div class="flash">
-          {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+        <div class="toasts">
+          {% for message in messages %}
+            <div class="toast" role="status">
+              <span>{{ message }}</span>
+              <button type="button" class="toast-close" aria-label="Dismiss"
+                      onclick="this.parentElement.remove()">×</button>
+            </div>
+          {% endfor %}
         </div>
       {% endif %}
     {% endwith %}

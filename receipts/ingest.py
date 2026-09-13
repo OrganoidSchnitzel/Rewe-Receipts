@@ -79,7 +79,10 @@ def ingest_rewe_document(document_id: int) -> Optional[str]:
                        document_id, exc)
 
     total = round(sum(i.total_price for i in items), 2)
-    notifier.notify_new_receipt(receipt_id, "REWE receipt", len(items), total)
+    notifier.notify_new_receipt(
+        receipt_id, "REWE receipt", len(items), total,
+        top_items=[i.name for i in items],
+    )
     return receipt_id
 
 
@@ -147,6 +150,7 @@ def ingest_lidl_receipt(receipt: "lidl.LidlReceipt") -> Optional[str]:
     notifier.notify_new_receipt(
         receipt_id, receipt.store or "Lidl receipt",
         len(receipt.items), receipt.total_amount,
+        top_items=[i.name for i in receipt.items],
     )
     return receipt_id
 

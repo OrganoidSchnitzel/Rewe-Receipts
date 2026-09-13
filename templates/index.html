@@ -3,46 +3,44 @@
 {% block title %}Receipts{% endblock %}
 
 {% block content %}
-  <section class="card">
-    <h1>Receipts</h1>
-    <p class="muted">
-      Rewe receipts are imported automatically from Paperless-ngx.
-      Lidl receipts are added by the Lidl Plus poller (follow-up) or via
-      <a href="{{ url_for('manual_form') }}">manual add</a>.
-    </p>
-
+  <div class="page-head">
+    <div>
+      <h1>Receipts</h1>
+      <p class="subtle">
+        Rewe imports automatically from Paperless-ngx; Lidl from the Lidl Plus
+        poller. Or <a href="{{ url_for('manual_form') }}">add one manually</a>.
+      </p>
+    </div>
     {% if receipts %}
-      <div class="table-scroll">
-      <table class="receipts">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Source</th>
-            <th>Store</th>
-            <th class="num">Items</th>
-            <th class="num">Total</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for receipt in receipts %}
-          <tr onclick="window.location='{{ url_for('receipt_detail', receipt_id=receipt.id) }}'">
-            <td data-label="Date">{{ (receipt.purchase_date or receipt.created_at)[:10] }}</td>
-            <td data-label="Source"><span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span></td>
-            <td data-label="Store">{{ receipt.store }}</td>
-            <td class="num" data-label="Items">{{ receipt.item_count }}</td>
-            <td class="num amount" data-label="Total">€{{ "%.2f"|format(receipt.total_amount) }}</td>
-            <td data-label="Status">
-              <span class="status status-{{ receipt.status }}">{{ receipt.status }}</span>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
-    {% else %}
-      <p>No receipts yet. They will appear here once Paperless imports a Rewe
-      document, or add one manually.</p>
+      <div class="count-chip">{{ receipts|length }} total ·
+        {{ receipts|selectattr('status', 'equalto', 'pending')|list|length }} pending</div>
     {% endif %}
-  </section>
+  </div>
+
+  {% if receipts %}
+    <div class="receipt-grid">
+      {% for receipt in receipts %}
+      <a class="receipt-card" href="{{ url_for('receipt_detail', receipt_id=receipt.id) }}">
+        <div class="rc-top">
+          <span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span>
+          <span class="pill pill-{{ receipt.status }}">{{ receipt.status }}</span>
+        </div>
+        <div class="rc-store">{{ receipt.store or receipt.source|upper }}</div>
+        <div class="rc-date">{{ (receipt.purchase_date or receipt.created_at)[:10] }}</div>
+        <div class="rc-foot">
+          <span class="rc-items">{{ receipt.item_count }} item{{ '' if receipt.item_count == 1 else 's' }}</span>
+          <span class="rc-total">€{{ "%.2f"|format(receipt.total_amount) }}</span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty">
+      <div class="empty-icon">🧾</div>
+      <h2>No receipts yet</h2>
+      <p class="subtle">They appear here once Paperless imports a Rewe document
+        or the Lidl poller runs — or add one manually.</p>
+      <a class="btn btn-primary" href="{{ url_for('manual_form') }}">Add a receipt</a>
+    </div>
+  {% endif %}
 {% endblock %}

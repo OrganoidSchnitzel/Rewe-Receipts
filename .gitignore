@@ -87,3 +87,6 @@ dmypy.json
 data/
 *.db
 *.sqlite3
+
+# Stray runtime files
+*.pid

@@ -53,12 +53,37 @@ class NotifierTests(unittest.TestCase):
             return Resp()
 
         with mock.patch.object(notifier.requests, "post", fake_post):
-            notifier.notify_new_receipt("abc123", "REWE receipt", 7, 16.31)
+            notifier.notify_new_receipt(
+                "abc123", "REWE receipt", 7, 16.31,
+                top_items=["Milch", "Brot & Co", "Käse", "Eier", "Apfel", "Banane"],
+            )
 
+        text = captured["json"]["text"]
         self.assertIn("sendMessage", captured["url"])
         self.assertEqual("999", captured["json"]["chat_id"])
-        self.assertIn("7 item(s) · €16.31", captured["json"]["text"])
-        self.assertIn("http://host:8881/receipts/abc123", captured["json"]["text"])
+        self.assertEqual("HTML", captured["json"]["parse_mode"])
+        self.assertIn("7 items · €16.31", text)
+        self.assertIn("http://host:8881/receipts/abc123", text)
+        # Top items are shown (max 5 + a "+N more"), with HTML-escaped names.
+        self.assertIn("Brot &amp; Co", text)
+        self.assertIn("+1 more", text)
+
+    def test_singular_item_wording(self) -> None:
+        self._configure()
+
+        class Resp:
+            def raise_for_status(self):
+                pass
+
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["json"] = json
+            return Resp()
+
+        with mock.patch.object(notifier.requests, "post", fake_post):
+            notifier.notify_new_receipt("x", "Lidl", 1, 2.50)
+        self.assertIn("1 item · €2.50", captured["json"]["text"])
 
     def test_failure_is_swallowed(self) -> None:
         self._configure()
