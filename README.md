@@ -71,6 +71,31 @@ service polls Lidl on `LIDL_POLL_INTERVAL_SECONDS` unattended (the container
 only needs the light base `lidl-plus`, no browser). `lidl-plus` is unofficial
 and can break if Lidl changes their API.
 
+#### Lidl API notes (hard-won gotchas)
+
+We use `lidl-plus` only for the OAuth token and make the ticket calls ourselves,
+because of three quirks discovered the hard way:
+
+1. **`App-Version` WAF reset.** `lidl-plus` hard-codes `App-Version: 999.99.9`;
+   Lidl's gateway now resets (HTTP/2 `RST_STREAM`) any request carrying that
+   impossible version. We send a realistic version instead (`LIDL_APP_VERSION`,
+   default `15.30.7`). If ticket calls start getting reset again, bump it to the
+   current app version from [apkmirror](https://www.apkmirror.com/apk/lidl-digital-international-gmbh-co-kg/lidl-plus-2/).
+2. **v2 list, v3 detail.** The ticket *list* is `GET /api/v2/{country}/tickets`;
+   a single ticket's *detail* is `GET /api/v3/{country}/tickets/{id}` (v2 detail
+   returns 400).
+3. **HTML receipts.** German ticket detail has no structured `itemsLine` — items
+   live in `htmlPrintedReceipt` as `<span class="article" data-art-description=…
+   data-art-quantity=… data-unit-price=…>`. The HTML repeats each line across
+   render copies, so `parse_lidl_html` dedupes by content. Line total = quantity
+   × unit price; `totalAmount` from the ticket is authoritative.
+
+Diagnose connectivity and mapping any time with:
+
+```bash
+docker compose exec receipt-importer python -m receipts.lidl
+```
+
 ### Duplicate detection
 
 A receipt is never imported twice. `external_id` (Paperless document id for
