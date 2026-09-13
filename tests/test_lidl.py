@@ -134,6 +134,12 @@ class HtmlTicketTests(unittest.TestCase):
         # The non purchase_list span ("summary_total") is excluded.
         self.assertEqual(["Banane lose", "Milch 3,5%", "Brot"], [i.name for i in items])
 
+    def test_deduplicates_repeated_render_copies(self) -> None:
+        # Lidl's HTML repeats each purchase line across render copies.
+        doubled = SAMPLE_HTML + SAMPLE_HTML
+        items = parse_lidl_html(doubled)
+        self.assertEqual(["Banane lose", "Milch 3,5%", "Brot"], [i.name for i in items])
+
     def test_weight_line_total_is_qty_times_unit(self) -> None:
         items = parse_lidl_html(SAMPLE_HTML)
         banane = items[0]

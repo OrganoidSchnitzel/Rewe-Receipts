@@ -99,7 +99,21 @@ def parse_lidl_html(html: str) -> list[ExtractedItem]:
     parser.feed(html)
 
     items: list[ExtractedItem] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for art in parser.articles:
+        # The HTML repeats each purchase line (multiple render copies); collapse
+        # identical spans. Lidl merges genuine repeat purchases into one line
+        # with a higher quantity, so identical lines are always render dupes.
+        key = (
+            art.get("data-art-id", ""),
+            art.get("data-art-description", ""),
+            art.get("data-art-quantity", ""),
+            art.get("data-unit-price", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+
         name = art.get("data-art-description", "").strip()
         if not name:
             continue
