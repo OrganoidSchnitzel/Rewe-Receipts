@@ -1,6 +1,31 @@
 import unittest
 
-from receipts.lidl import parse_amount, parse_lidl_ticket, reconciles
+from receipts.lidl import parse_amount, parse_lidl_html, parse_lidl_ticket, reconciles
+
+
+# A realistic German v3 htmlPrintedReceipt fragment (article spans only).
+SAMPLE_HTML = """
+<div class="purchase_list">
+  <span id="purchase_list_line_1" class="article css_bold" data-art-id="0080000"
+        data-art-quantity="0,638" data-unit-price="1,29" data-tax-type="A"
+        data-art-description="Banane lose">Banane lose</span>
+  <span id="purchase_list_line_2" class="article" data-art-id="0011111"
+        data-art-quantity="2" data-unit-price="0,95" data-tax-type="A"
+        data-art-description="Milch 3,5%">Milch 3,5%</span>
+  <span id="purchase_list_line_3" class="article" data-art-id="0022222"
+        data-art-quantity="1" data-unit-price="1,49" data-tax-type="A"
+        data-art-description="Brot">Brot</span>
+  <span id="summary_total" class="article" data-art-description="ignore me">x</span>
+</div>
+"""
+
+HTML_TICKET = {
+    "id": "23001771842026091273976",
+    "date": "2026-09-12T15:33:28+00:00",
+    "totalAmount": 3.72,  # 0.82 + 1.90 + 1.49 = 4.21, minus 0.49 coupon
+    "store": {"name": "Hamburg", "locality": "Hamburg"},
+    "htmlPrintedReceipt": SAMPLE_HTML,
+}
 
 
 # A representative ticket detail, matching the lidl-plus `ticket()` shape:
@@ -101,6 +126,41 @@ class ParseTicketTests(unittest.TestCase):
         ]}
         r = parse_lidl_ticket(ticket)
         self.assertEqual(["Real"], [i.name for i in r.items])
+
+
+class HtmlTicketTests(unittest.TestCase):
+    def test_parses_article_spans_only(self) -> None:
+        items = parse_lidl_html(SAMPLE_HTML)
+        # The non purchase_list span ("summary_total") is excluded.
+        self.assertEqual(["Banane lose", "Milch 3,5%", "Brot"], [i.name for i in items])
+
+    def test_weight_line_total_is_qty_times_unit(self) -> None:
+        items = parse_lidl_html(SAMPLE_HTML)
+        banane = items[0]
+        self.assertEqual(0.638, banane.quantity)
+        self.assertEqual(1.29, banane.unit_price)
+        self.assertEqual(0.82, banane.total_price)  # 0.638 * 1.29
+
+    def test_count_line_total(self) -> None:
+        milch = parse_lidl_html(SAMPLE_HTML)[1]
+        self.assertEqual(2.0, milch.quantity)
+        self.assertEqual(1.90, milch.total_price)  # 2 * 0.95
+
+    def test_ticket_adds_reducing_coupon_line_to_reconcile(self) -> None:
+        r = parse_lidl_ticket(HTML_TICKET)
+        self.assertEqual("lidl:23001771842026091273976", r.external_id)
+        self.assertEqual(3.72, r.total_amount)
+        # gross 0.82 + 1.90 + 1.49 = 4.21; coupon line = -(4.21 - 3.72) = -0.49
+        self.assertEqual("Rabatt / Coupons", r.items[-1].name)
+        self.assertEqual(-0.49, r.items[-1].total_price)
+        self.assertTrue(reconciles(r))
+        self.assertEqual("Lidl Hamburg", r.store)
+
+    def test_no_coupon_line_when_already_reconciled(self) -> None:
+        ticket = dict(HTML_TICKET, totalAmount=4.21)
+        r = parse_lidl_ticket(ticket)
+        self.assertEqual(3, len(r.items))  # no adjustment line
+        self.assertTrue(reconciles(r))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Any, Optional
 
 from . import config
@@ -61,22 +62,117 @@ def parse_amount(value: Any) -> float:
 
 # --- Ticket mapping (pure) ---------------------------------------------------
 
-def parse_lidl_ticket(ticket: dict[str, Any]) -> LidlReceipt:
-    """Map a lidl-plus ``ticket()`` detail dict onto the internal model.
+def _store_name(store: Any) -> str:
+    if isinstance(store, dict):
+        for key in ("name", "locality", "city", "address"):
+            if store.get(key):
+                return f"Lidl {store[key]}"
+    return "Lidl"
 
-    * Each line's total = ``originalAmount`` (extended line amount) minus its
-      discounts. Deposits (Pfand) are left out of item totals; the receipt-level
-      ``totalAmount`` from Lidl remains the authoritative figure shown.
+
+class _LidlArticleParser(HTMLParser):
+    """Collect the article <span> data attributes from a Lidl HTML receipt."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.articles: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        if tag != "span":
+            return
+        attr = {k: (v or "") for k, v in attrs}
+        css = attr.get("class", "")
+        # Only real purchase lines (not summary/return copies of the same span).
+        if "article" in css and attr.get("data-art-description") \
+                and attr.get("id", "").startswith("purchase_list_line"):
+            self.articles.append(attr)
+
+
+def parse_lidl_html(html: str) -> list[ExtractedItem]:
+    """Parse item lines from a Lidl v3 ``htmlPrintedReceipt`` (DE format).
+
+    Each article span carries ``data-art-description``, ``data-art-quantity``
+    and ``data-unit-price`` (comma decimals); the line total is quantity ×
+    unit price (weight lines have a fractional quantity, e.g. 0,638 kg).
+    """
+    parser = _LidlArticleParser()
+    parser.feed(html)
+
+    items: list[ExtractedItem] = []
+    for art in parser.articles:
+        name = art.get("data-art-description", "").strip()
+        if not name:
+            continue
+        unit_price = parse_amount(art.get("data-unit-price"))
+        qty_raw = art.get("data-art-quantity")
+        if qty_raw:
+            quantity = parse_amount(qty_raw) or 1.0
+            total_price = round(quantity * unit_price, 2)
+        else:
+            quantity = 1.0
+            total_price = unit_price
+        if total_price <= 0:
+            continue
+        items.append(
+            ExtractedItem(
+                name=name,
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price,
+                category=art.get("data-tax-type") or None,
+                source_method="lidl",
+            )
+        )
+    return items
+
+
+def parse_lidl_ticket(ticket: dict[str, Any]) -> LidlReceipt:
+    """Map a Lidl ticket detail dict onto the internal model.
+
+    Handles both the German v3 ``htmlPrintedReceipt`` format and the legacy
+    structured ``itemsLine`` format. ``totalAmount`` from the ticket is the
+    authoritative receipt total; coupons/loyalty that reduced the paid total are
+    represented as a single reducing line so the items reconcile to it.
     """
     ticket_id = str(ticket.get("id") or ticket.get("sequenceNumber") or "")
     purchase_date = ticket.get("date") or ticket.get("isoDate")
     total_amount = parse_amount(ticket.get("totalAmount"))
+    store = _store_name(ticket.get("store"))
 
-    store = "Lidl"
-    store_info = ticket.get("store")
-    if isinstance(store_info, dict) and store_info.get("name"):
-        store = f"Lidl {store_info['name']}"
+    html = ticket.get("htmlPrintedReceipt") or ticket.get("html")
+    if isinstance(html, str) and html.strip():
+        items = parse_lidl_html(html)
+        # Coupons/loyalty reduce the paid total below the gross line sum; add one
+        # reducing line so the receipt reconciles (itemized coupons: follow-up).
+        if total_amount > 0 and items:
+            delta = round(sum(i.total_price for i in items) - total_amount, 2)
+            if delta > 0.02:
+                items.append(
+                    ExtractedItem(
+                        name="Rabatt / Coupons",
+                        quantity=1.0,
+                        unit_price=-delta,
+                        total_price=-delta,
+                        source_method="lidl",
+                    )
+                )
+    else:
+        items = _parse_itemsline(ticket)
 
+    if total_amount <= 0 and items:
+        total_amount = round(sum(i.total_price for i in items), 2)
+
+    return LidlReceipt(
+        external_id=f"lidl:{ticket_id}",
+        purchase_date=purchase_date,
+        total_amount=total_amount,
+        store=store,
+        items=items,
+    )
+
+
+def _parse_itemsline(ticket: dict[str, Any]) -> list[ExtractedItem]:
+    """Legacy structured item list (non-HTML tickets / other countries)."""
     items: list[ExtractedItem] = []
     for line in ticket.get("itemsLine") or ticket.get("items") or []:
         name = (line.get("name") or "").strip()
@@ -86,7 +182,6 @@ def parse_lidl_ticket(ticket: dict[str, Any]) -> LidlReceipt:
         quantity = parse_amount(line.get("quantity")) or 1.0
         gross = parse_amount(line.get("originalAmount"))
         if not gross:
-            # Fall back to unit price * quantity when no line amount is given.
             gross = round(parse_amount(line.get("currentUnitPrice")) * quantity, 2)
 
         discount_total = sum(
@@ -112,17 +207,7 @@ def parse_lidl_ticket(ticket: dict[str, Any]) -> LidlReceipt:
                 source_method="lidl",
             )
         )
-
-    if total_amount <= 0 and items:
-        total_amount = round(sum(i.total_price for i in items), 2)
-
-    return LidlReceipt(
-        external_id=f"lidl:{ticket_id}",
-        purchase_date=purchase_date,
-        total_amount=total_amount,
-        store=store,
-        items=items,
-    )
+    return items
 
 
 def reconciles(receipt: LidlReceipt) -> bool:
@@ -293,9 +378,17 @@ def diagnose() -> None:
         if m:
             print("sample article span:", m.group(0))
 
+    for key in ("couponsUsed", "offersUsed"):
+        val = detail.get(key)
+        if val:
+            print(f"\n{key}: {val}")
+
     parsed = parse_lidl_ticket(detail)
-    print(f"\nparsed by current mapping -> {len(parsed.items)} item(s), "
+    print(f"\nparsed -> {len(parsed.items)} item(s), store={parsed.store!r}, "
           f"total €{parsed.total_amount:.2f}, reconciles={reconciles(parsed)}")
+    for it in parsed.items[:20]:
+        print(f"   {it.name:28.28} qty={it.quantity:g} unit={it.unit_price:.2f} "
+              f"total={it.total_price:.2f}")
     if not parsed.items:
         print("⚠ 0 items parsed — mapping needs updating for the shape above.")
 
