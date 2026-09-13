@@ -112,11 +112,18 @@
         {% endif %}
       </form>
 
-      <form method="post" action="{{ url_for('delete_receipt', receipt_id=receipt.id) }}"
-            class="delete-form"
-            onsubmit="return confirm('Delete this receipt? A Rewe document will be re-imported on the next poll with the current extraction.');">
-        <button type="submit" class="danger-link">Delete receipt</button>
-      </form>
+      <div class="footer-actions">
+        {% if receipt.status != 'settled' %}
+        <form method="post" action="{{ url_for('reextract_receipt', receipt_id=receipt.id) }}" class="inline">
+          <button type="submit" class="link-btn">↻ Re-extract from source</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('delete_receipt', receipt_id=receipt.id) }}"
+              class="inline"
+              onsubmit="return confirm('Delete this receipt? A Rewe document will be re-imported on the next poll with the current extraction.');">
+          <button type="submit" class="danger-link">Delete receipt</button>
+        </form>
+      </div>
     </div>
   </section>
 
