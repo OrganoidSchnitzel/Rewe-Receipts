@@ -445,9 +445,22 @@ def diagnose() -> None:
             print("sample article span:", m.group(0))
 
     if isinstance(html, str) and html:
-        print("\n-- First purchase block: article/discount/currency spans --")
-        for row in _dump_first_block(html)[:40]:
-            print("  ", row)
+        import re
+
+        def window(needle: str, before: int = 220, after: int = 520) -> str:
+            idx = html.find(needle)
+            if idx < 0:
+                return f"(‘{needle}’ not found)"
+            frag = html[max(0, idx - before): idx + after]
+            return re.sub(r"\s+", " ", frag).strip()
+
+        print("\n-- Raw HTML around the first ARTICLE (Banane) --")
+        print("  ", window('data-art-description="Banane'))
+        print("\n-- Raw HTML around the first DISCOUNT span --")
+        print("  ", window('class="discount'))
+        for label in ("Rabatt", "Preisvorteil"):
+            print(f"\n-- Raw HTML around first '{label}' --")
+            print("  ", window(f">{label}", before=120, after=360))
 
     parsed = parse_lidl_ticket(detail)
     print(f"\nparsed -> {len(parsed.items)} item(s), store={parsed.store!r}, "
