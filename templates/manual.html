@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Manual add{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <h1>Add a receipt manually</h1>
+    <p class="muted">
+      Paste Paperless OCR text, upload a receipt PDF, or paste a Lidl Plus API
+      JSON response. This creates a receipt you can review like any imported one.
+    </p>
+
+    <form action="{{ url_for('manual_submit') }}" method="post" enctype="multipart/form-data">
+      <p>
+        <label for="store_source">Source</label>
+        <select id="store_source" name="store_source">
+          <option value="rewe" selected>REWE (paperless-ngx OCR / PDF)</option>
+          <option value="lidl">Lidl (Plus API JSON)</option>
+        </select>
+      </p>
+      <p>
+        <label for="receipt_pdf">Receipt PDF (optional)</label>
+        <input id="receipt_pdf" name="receipt_pdf" type="file" accept="application/pdf" />
+      </p>
+      <p>
+        <label for="receipt_text">Receipt text / Lidl JSON</label>
+        <textarea id="receipt_text" name="receipt_text" rows="12"></textarea>
+      </p>
+      <p>
+        <label for="external_id">External id (optional, for de-duplication)</label>
+        <input id="external_id" name="external_id" type="text" placeholder="e.g. lidl:abc123" />
+      </p>
+      <button type="submit" class="primary">Parse &amp; review</button>
+    </form>
+  </section>
+{% endblock %}
