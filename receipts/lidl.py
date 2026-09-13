@@ -214,15 +214,23 @@ def list_ticket_ids(client) -> list[str]:
     return ids
 
 
-def fetch_ticket(ticket_id: str, client) -> LidlReceipt:
+def fetch_ticket_raw(ticket_id: str, client) -> dict[str, Any]:
     url = f"{_TICKET_API}/{config.LIDL_COUNTRY}/tickets/{ticket_id}"
     response = client.get(url)
     response.raise_for_status()
-    return parse_lidl_ticket(response.json())
+    return response.json()
+
+
+def fetch_ticket(ticket_id: str, client) -> LidlReceipt:
+    return parse_lidl_ticket(fetch_ticket_raw(ticket_id, client))
+
+
+# Candidate keys the item list might live under, across Lidl API variants.
+_ITEM_LIST_KEYS = ("itemsLine", "items", "articlesList", "articles", "lineItems")
 
 
 def diagnose() -> None:
-    """Print a step-by-step connectivity check (run: python -m receipts.lidl)."""
+    """Connectivity + shape check (run: python -m receipts.lidl)."""
     import time
 
     if not config.LIDL_REFRESH_TOKEN:
@@ -231,23 +239,45 @@ def diagnose() -> None:
     print(f"Country={config.LIDL_COUNTRY} Language={config.LIDL_LANGUAGE} "
           f"App-Version={config.LIDL_APP_VERSION}")
     try:
-        headers = _auth_headers()
+        _auth_headers()
         print("✓ Access token obtained (Authorization header built).")
     except Exception as exc:
         print(f"✗ Token step failed: {exc!r}")
         return
+
     try:
         started = time.monotonic()
         with open_client() as client:
             summaries = list_tickets(client)
-        elapsed = time.monotonic() - started
-        print(f"✓ HTTP/2 ticket list OK in {elapsed:.1f}s — {len(summaries)} ticket(s).")
-        if summaries:
-            first = summaries[0]
-            print(f"  newest id={first.get('id')} date={first.get('date')} "
-                  f"total={first.get('totalAmount')}")
+            elapsed = time.monotonic() - started
+            print(f"✓ HTTP/2 ticket list OK in {elapsed:.1f}s — "
+                  f"{len(summaries)} ticket(s).")
+            if not summaries:
+                print("  (No tickets on this account yet — nothing to import.)")
+                return
+
+            tid = str(summaries[0].get("id") or summaries[0].get("sequenceNumber"))
+            detail = fetch_ticket_raw(tid, client)
     except Exception as exc:
-        print(f"✗ Ticket list failed: {type(exc).__name__}: {exc}")
+        print(f"✗ Ticket call failed: {type(exc).__name__}: {exc}")
+        return
+
+    print(f"\n-- Newest ticket detail (id={tid}) --")
+    print("top-level keys:", sorted(detail.keys()))
+    items_key = next((k for k in _ITEM_LIST_KEYS if isinstance(detail.get(k), list)), None)
+    print("items key found:", items_key)
+    if items_key:
+        items = detail[items_key]
+        print(f"item count: {len(items)}")
+        if items:
+            print("first item keys:", sorted(items[0].keys()))
+            print("first item:", items[0])
+
+    parsed = parse_lidl_ticket(detail)
+    print(f"\nparsed by current mapping -> {len(parsed.items)} item(s), "
+          f"total €{parsed.total_amount:.2f}, reconciles={reconciles(parsed)}")
+    if not parsed.items:
+        print("⚠ 0 items parsed — the item mapping needs the real keys above.")
 
 
 if __name__ == "__main__":
