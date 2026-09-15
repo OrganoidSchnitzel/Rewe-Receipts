@@ -7,6 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Data (SQLite DB, stored receipt PDFs, Lidl token) lives on a mounted volume.
+VOLUME ["/app/data"]
+
 EXPOSE 8000
 
 CMD ["python", "app.py"]
