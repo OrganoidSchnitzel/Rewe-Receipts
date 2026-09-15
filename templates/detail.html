@@ -39,19 +39,23 @@
       {% endif %}
     </section>
 
-    <section class="items-panel card-pad">
+    <section class="items-panel card-pad" id="items-panel" data-advanced="0">
       <form method="post" id="items-form">
         <input type="hidden" name="item_count" value="{{ receipt.items|length }}" />
         <input type="hidden" name="receipt_total" value="{{ receipt.total_amount }}" />
 
         <div class="items-head">
           <h2>Items</h2>
-          {% if receipt.status != 'settled' %}
-            <label class="select-all-label">
-              <input type="checkbox" id="select-all" title="Select all / none" />
-              <span>All</span>
-            </label>
-          {% endif %}
+          <div class="items-head-actions">
+            {% if receipt.status != 'settled' %}
+              <button type="button" id="advanced-toggle" class="btn-ghost" aria-pressed="false"
+                      title="Assign items to people">⚙ Advanced split</button>
+              <label class="select-all-label">
+                <input type="checkbox" id="select-all" title="Select all / none" />
+                <span>All</span>
+              </label>
+            {% endif %}
+          </div>
         </div>
 
         <table class="items">
@@ -65,16 +69,17 @@
           </thead>
           <tbody>
             {% for item in receipt.items %}
+            {% set idx = loop.index0 %}
             <tr class="{% if not item.included %}excluded{% endif %}">
               <td class="cb-col">
-                <input type="checkbox" name="included" value="{{ loop.index0 }}"
+                <input type="checkbox" name="included" value="{{ idx }}"
                        class="include-cb"
                        {% if item.included %}checked{% endif %}
                        {% if receipt.status == 'settled' %}disabled{% endif %} />
               </td>
               <td>
                 <div class="item-name-cell">
-                  <input type="text" name="name_{{ loop.index0 }}" value="{{ item.name }}"
+                  <input type="text" name="name_{{ idx }}" value="{{ item.name }}"
                          {% if receipt.status == 'settled' %}readonly{% endif %} />
                   {% if item.source_method == 'ollama' %}
                     <span class="src src-ai" title="Extracted by the AI fallback — confirm it and it's learned for next time">AI</span>
@@ -82,20 +87,25 @@
                     <span class="src src-known" title="Matched a learned known-item">✓</span>
                   {% endif %}
                 </div>
+                <div class="assignees" data-index="{{ idx }}"
+                     data-selected="{{ item.assignees|join(',') }}" hidden></div>
+                {% for pid in item.assignees %}
+                  <input type="hidden" class="assignee-store" name="assignees_{{ idx }}" value="{{ pid }}" />
+                {% endfor %}
               </td>
               <td class="num">
-                <input type="number" step="0.001" name="quantity_{{ loop.index0 }}"
+                <input type="number" step="0.001" name="quantity_{{ idx }}"
                        value="{{ item.quantity|round(3)|int if item.quantity == item.quantity|int else item.quantity }}"
                        class="qty"
                        {% if receipt.status == 'settled' %}readonly{% endif %} />
               </td>
               <td class="num">
-                <input type="number" step="0.01" name="total_price_{{ loop.index0 }}"
+                <input type="number" step="0.01" name="total_price_{{ idx }}"
                        value="{{ "%.2f"|format(item.total_price) }}" class="price"
                        {% if receipt.status == 'settled' %}readonly{% endif %} />
               </td>
-              <input type="hidden" name="raw_line_{{ loop.index0 }}" value="{{ item.raw_line or '' }}" />
-              <input type="hidden" name="source_method_{{ loop.index0 }}" value="{{ item.source_method }}" />
+              <input type="hidden" name="raw_line_{{ idx }}" value="{{ item.raw_line or '' }}" />
+              <input type="hidden" name="source_method_{{ idx }}" value="{{ item.source_method }}" />
             </tr>
             {% endfor %}
             {% if not receipt.items %}
@@ -105,6 +115,7 @@
         </table>
 
         <div id="total-warning" class="warn" hidden></div>
+        <div id="assign-summary" class="assign-summary" hidden></div>
 
         <div class="actionbar">
           <div class="actionbar-total">
@@ -119,6 +130,10 @@
               <button type="submit" class="btn btn-primary" id="spliit-btn"
                       formaction="{{ url_for('create_spliit_expense', receipt_id=receipt.id) }}">
                 Create Spliit expense
+              </button>
+              <button type="submit" class="btn btn-primary" id="spliit-adv-btn" hidden
+                      formaction="{{ url_for('create_spliit_expense_advanced', receipt_id=receipt.id) }}">
+                Create split expense
               </button>
             </div>
           {% else %}
@@ -146,36 +161,42 @@
     (function () {
       const form = document.getElementById('items-form');
       if (!form) return;
+      const panel = document.getElementById('items-panel');
       const totalEl = document.getElementById('running-total');
       const countEl = document.getElementById('selected-count');
       const warnEl = document.getElementById('total-warning');
+      const summaryEl = document.getElementById('assign-summary');
       const spliitBtn = document.getElementById('spliit-btn');
+      const advBtn = document.getElementById('spliit-adv-btn');
+      const advToggle = document.getElementById('advanced-toggle');
       const selectAll = document.getElementById('select-all');
       const receiptTotal = parseFloat(form.querySelector('[name="receipt_total"]').value) || 0;
+      let participants = null;   // [{id,name}] once loaded
 
+      function rows() { return Array.from(form.querySelectorAll('tbody tr')); }
+      function isAdvanced() { return panel.dataset.advanced === '1'; }
+
+      // --- even-split running total + shared recalc ---
       function recalc() {
         let total = 0, count = 0;
-        form.querySelectorAll('tbody tr').forEach(function (row) {
+        rows().forEach(function (row) {
           const cb = row.querySelector('.include-cb');
           const price = row.querySelector('.price');
           if (!cb) return;
           row.classList.toggle('excluded', !cb.checked);
-          if (cb.checked && price) {
-            total += parseFloat(price.value) || 0;
-            count += 1;
-          }
+          if (cb.checked && price) { total += parseFloat(price.value) || 0; count += 1; }
         });
         totalEl.textContent = '€' + total.toFixed(2);
         countEl.textContent = count;
-        if (spliitBtn) spliitBtn.disabled = count === 0;
+        const enable = count > 0;
+        if (spliitBtn) spliitBtn.disabled = !enable;
+        if (advBtn) advBtn.disabled = !enable;
 
         const diff = Math.abs(total - receiptTotal);
         if (receiptTotal > 0 && diff > 0.005) {
           warnEl.hidden = false;
           warnEl.textContent = (total < receiptTotal ? 'Selection is €' + diff.toFixed(2) + ' below' : 'Selection is €' + diff.toFixed(2) + ' above') + ' the receipt total.';
-        } else {
-          warnEl.hidden = true;
-        }
+        } else { warnEl.hidden = true; }
 
         if (selectAll) {
           const boxes = form.querySelectorAll('.include-cb');
@@ -183,6 +204,86 @@
           selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
           selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
         }
+        if (isAdvanced()) recalcSummary();
+      }
+
+      // --- advanced per-person summary (mirrors server apportionment) ---
+      function recalcSummary() {
+        if (!participants) return;
+        const totals = {}; participants.forEach(p => totals[p.id] = 0);
+        rows().forEach(function (row) {
+          const cb = row.querySelector('.include-cb');
+          const price = row.querySelector('.price');
+          if (!cb || !cb.checked || !price) return;
+          const cents = Math.round((parseFloat(price.value) || 0) * 100);
+          let ids = Array.from(row.querySelectorAll('.chip-cb:checked')).map(c => c.value);
+          if (!ids.length) ids = participants.map(p => p.id);
+          const k = ids.length;
+          const base = Math.trunc(cents / k);
+          let rem = cents - base * k;   // works for negatives too
+          ids.forEach(function (pid, i) { totals[pid] += base + (i < rem ? 1 : 0); });
+        });
+        summaryEl.innerHTML = participants
+          .filter(p => totals[p.id] !== 0)
+          .map(p => '<span class="who"><b>' + escapeHtml(p.name) + '</b> €' + (totals[p.id] / 100).toFixed(2) + '</span>')
+          .join('');
+      }
+
+      function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+      // --- build the assignee chips for every item once participants load ---
+      function buildChips() {
+        form.querySelectorAll('.assignee-store').forEach(el => el.remove()); // chips become the source of truth
+        form.querySelectorAll('.assignees').forEach(function (box) {
+          const idx = box.dataset.index;
+          const selected = (box.dataset.selected || '').split(',').filter(Boolean);
+          box.innerHTML = '';
+          participants.forEach(function (p) {
+            const checked = selected.length ? selected.includes(p.id) : true; // default: everyone
+            const label = document.createElement('label');
+            label.className = 'chip' + (checked ? ' on' : '');
+            label.innerHTML = '<input type="checkbox" class="chip-cb" name="assignees_' + idx + '" value="' +
+              p.id + '"' + (checked ? ' checked' : '') + ' hidden> ' + escapeHtml(p.name);
+            const cb = label.querySelector('input');
+            cb.addEventListener('change', function () {
+              // keep at least one selected
+              const group = box.querySelectorAll('.chip-cb');
+              if (!Array.from(group).some(c => c.checked)) { cb.checked = true; }
+              label.classList.toggle('on', cb.checked);
+              recalcSummary();
+            });
+            box.appendChild(label);
+          });
+        });
+      }
+
+      function setAdvanced(on) {
+        panel.dataset.advanced = on ? '1' : '0';
+        advToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+        form.querySelectorAll('.assignees').forEach(b => b.hidden = !on);
+        summaryEl.hidden = !on;
+        if (spliitBtn) spliitBtn.hidden = on;
+        if (advBtn) advBtn.hidden = !on;
+        if (on) recalcSummary();
+      }
+
+      if (advToggle) {
+        advToggle.addEventListener('click', function () {
+          const turnOn = !isAdvanced();
+          if (turnOn && !participants) {
+            advToggle.disabled = true;
+            fetch('{{ url_for('api_participants') }}')
+              .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || 'error')))
+              .then(function (data) { participants = data; buildChips(); setAdvanced(true); })
+              .catch(function (err) {
+                warnEl.hidden = false;
+                warnEl.textContent = 'Could not load people from Spliit: ' + err;
+              })
+              .finally(function () { advToggle.disabled = false; });
+          } else {
+            setAdvanced(turnOn);
+          }
+        });
       }
 
       if (selectAll) {

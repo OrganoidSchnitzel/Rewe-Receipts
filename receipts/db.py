@@ -75,7 +75,8 @@ def init_db() -> None:
                 included      INTEGER NOT NULL DEFAULT 1,
                 position      INTEGER NOT NULL DEFAULT 0,
                 source_method TEXT NOT NULL DEFAULT '',
-                raw_line      TEXT
+                raw_line      TEXT,
+                assignees     TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS known_items (
@@ -91,6 +92,14 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_items_receipt ON items(receipt_id);
             """
         )
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight additive migrations for databases from earlier versions."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
+    if "assignees" not in cols:
+        conn.execute("ALTER TABLE items ADD COLUMN assignees TEXT NOT NULL DEFAULT ''")
 
 
 # --- Duplicate detection -----------------------------------------------------
@@ -154,8 +163,8 @@ def create_receipt(
                 """
                 INSERT INTO items
                     (receipt_id, name, quantity, unit_price, total_price,
-                     category, included, position, source_method, raw_line)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                     category, included, position, source_method, raw_line, assignees)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, '')
                 """,
                 (
                     receipt_id,
@@ -190,8 +199,8 @@ def replace_items(receipt_id: str, items: list[dict]) -> None:
                 """
                 INSERT INTO items
                     (receipt_id, name, quantity, unit_price, total_price,
-                     category, included, position, source_method, raw_line)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     category, included, position, source_method, raw_line, assignees)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     receipt_id,
@@ -204,6 +213,7 @@ def replace_items(receipt_id: str, items: list[dict]) -> None:
                     position,
                     item.get("source_method", "") or "",
                     item.get("raw_line"),
+                    ",".join(item.get("assignees") or []),
                 ),
             )
         conn.execute(
@@ -280,6 +290,7 @@ def get_receipt(receipt_id: str) -> Optional[Receipt]:
                 position=ir["position"],
                 source_method=ir["source_method"],
                 raw_line=ir["raw_line"],
+                assignees=[a for a in (ir["assignees"] or "").split(",") if a],
             )
             for ir in item_rows
         ]

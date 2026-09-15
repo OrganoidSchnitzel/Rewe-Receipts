@@ -142,32 +142,23 @@ def resolve_payer(participants: list[Participant]) -> Participant:
     return participants[0]
 
 
-def build_expense_payload(
+def _expense_payload(
     *,
     group_id: str,
     title: str,
     amount_cents: int,
     payer_id: str,
-    participant_ids: list[str],
+    paid_for: list[dict[str, Any]],
+    split_mode: str,
     category: int = 0,
     expense_date: Optional[str] = None,
     notes: str = "",
 ) -> dict[str, Any]:
-    """Construct the ``groups.expenses.create`` input.
-
-    Kept pure and side-effect free so it can be unit tested — a bug here would
-    create incorrect real expenses.
-
-    * ``amount_cents`` must already be an integer number of cents.
-    * ``splitMode`` is EVENLY: every listed participant owes an equal share.
-    """
+    """Assemble the ``groups.expenses.create`` input (pure, unit-tested)."""
     if amount_cents <= 0:
         raise SpliitError("Expense amount must be positive.")
-    if not participant_ids:
+    if not paid_for:
         raise SpliitError("Expense must have at least one participant to split among.")
-    if payer_id not in participant_ids:
-        # Payer must be part of paidFor for an even split to include them.
-        participant_ids = [payer_id, *participant_ids]
 
     # Spliit requires a coercible date; default to today when none is known.
     if not expense_date:
@@ -179,10 +170,8 @@ def build_expense_payload(
         "category": category,
         "expenseDate": expense_date,  # ISO date string
         "paidBy": payer_id,
-        "paidFor": [
-            {"participant": pid, "shares": 1} for pid in participant_ids
-        ],
-        "splitMode": "EVENLY",
+        "paidFor": paid_for,
+        "splitMode": split_mode,
         "saveDefaultSplittingOptions": False,
         "isReimbursement": False,
         "documents": [],
@@ -196,6 +185,64 @@ def build_expense_payload(
         "groupId": group_id,
         "expenseFormValues": expense_form_values,
     }
+
+
+def build_expense_payload(
+    *,
+    group_id: str,
+    title: str,
+    amount_cents: int,
+    payer_id: str,
+    participant_ids: list[str],
+    category: int = 0,
+    expense_date: Optional[str] = None,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Even split: every listed participant owes an equal share (EVENLY).
+
+    ``amount_cents`` must already be an integer number of cents.
+    """
+    if not participant_ids:
+        raise SpliitError("Expense must have at least one participant to split among.")
+    if payer_id not in participant_ids:
+        participant_ids = [payer_id, *participant_ids]
+    return _expense_payload(
+        group_id=group_id, title=title, amount_cents=amount_cents, payer_id=payer_id,
+        paid_for=[{"participant": pid, "shares": 1} for pid in participant_ids],
+        split_mode="EVENLY", category=category, expense_date=expense_date, notes=notes,
+    )
+
+
+def build_amount_payload(
+    *,
+    group_id: str,
+    title: str,
+    payer_id: str,
+    participant_cents: dict[str, int],
+    category: int = 0,
+    expense_date: Optional[str] = None,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Per-person split by exact amount (BY_AMOUNT).
+
+    ``participant_cents`` maps participant id -> the integer cents they owe.
+    Only positive amounts are sent; the expense amount is their sum (Spliit
+    requires BY_AMOUNT shares to total the expense amount).
+    """
+    paid_for = [
+        {"participant": pid, "shares": int(cents)}
+        for pid, cents in participant_cents.items() if int(cents) > 0
+    ]
+    if not paid_for:
+        raise SpliitError("No participant owes a positive amount.")
+    if any(int(c) < 0 for c in participant_cents.values()):
+        raise SpliitError("A participant's share came out negative; adjust the split.")
+    amount_cents = sum(pf["shares"] for pf in paid_for)
+    return _expense_payload(
+        group_id=group_id, title=title, amount_cents=amount_cents, payer_id=payer_id,
+        paid_for=paid_for, split_mode="BY_AMOUNT",
+        category=category, expense_date=expense_date, notes=notes,
+    )
 
 
 def create_expense(
@@ -224,6 +271,28 @@ def create_expense(
         participant_ids=[p.id for p in participants],
         expense_date=expense_date,
         notes=notes,
+    )
+    data = _trpc_mutation("groups.expenses.create", payload)
+    expense_id = data.get("expenseId") if isinstance(data, dict) else None
+    if not expense_id:
+        raise SpliitError(f"Spliit did not return an expenseId: {data!r}")
+    return expense_id
+
+
+def create_expense_by_amounts(
+    *,
+    title: str,
+    participant_cents: dict[str, int],
+    payer_id: str,
+    group_id: Optional[str] = None,
+    notes: str = "",
+    expense_date: Optional[str] = None,
+) -> str:
+    """Create a per-person (BY_AMOUNT) expense. Returns the new expense id."""
+    group_id = group_id or config.SPLIIT_GROUP_ID
+    payload = build_amount_payload(
+        group_id=group_id, title=title, payer_id=payer_id,
+        participant_cents=participant_cents, notes=notes, expense_date=expense_date,
     )
     data = _trpc_mutation("groups.expenses.create", payload)
     expense_id = data.get("expenseId") if isinstance(data, dict) else None
