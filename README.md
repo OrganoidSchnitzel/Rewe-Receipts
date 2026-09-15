@@ -122,8 +122,16 @@ otherwise the group's first participant is used). Verified against the Spliit
 source: amounts are stored as **integer cents**, and in `EVENLY` mode Spliit
 **ignores per-participant shares** and divides equally among the listed
 participants — so the split is correct regardless of the `shares` value sent.
-Spliit also supports `BY_SHARES` / `BY_AMOUNT` / `BY_PERCENTAGE`, so per-expense
-custom splits can be added later if you want them.
+Spliit also supports `BY_SHARES` / `BY_AMOUNT` / `BY_PERCENTAGE`.
+
+**Advanced split (per item).** In the receipt detail view, the **⚙ Advanced
+split** button reveals a person chip on every item — the people are loaded live
+from your Spliit group (`/api/participants`). Assign each item to one person or
+split it among several (default: everyone). A live per-person summary shows who
+owes what, and **Create split expense** posts one `BY_AMOUNT` expense with each
+participant's exact share (you as payer). Assignments are saved per item, and
+the default (button off) stays an equal split. Item cents are apportioned with
+remainder distribution so per-person amounts sum exactly to the receipt total.
 
 On success the returned Spliit `expenseId` is stored against the receipt and it
 is marked `settled`, so it can't create a duplicate expense.

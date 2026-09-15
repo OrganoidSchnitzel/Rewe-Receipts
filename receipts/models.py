@@ -60,3 +60,5 @@ class ReceiptItemRow:
     position: int
     source_method: str = ""
     raw_line: Optional[str] = None
+    # Spliit participant ids this item is split among (empty = split among all).
+    assignees: list[str] = field(default_factory=list)

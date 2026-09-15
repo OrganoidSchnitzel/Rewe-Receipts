@@ -57,6 +57,7 @@ def _parse_items_from_form() -> list[dict]:
         except ValueError:
             total_price = 0.0
         unit_price = round(total_price / quantity, 2) if quantity else total_price
+        assignees = [a for a in request.form.getlist(f"assignees_{index}") if a]
         items.append(
             {
                 "name": name,
@@ -66,6 +67,7 @@ def _parse_items_from_form() -> list[dict]:
                 "included": str(index) in selected,
                 "raw_line": request.form.get(f"raw_line_{index}", "") or None,
                 "source_method": request.form.get(f"source_method_{index}", "") or "",
+                "assignees": assignees,
             }
         )
     return items
@@ -163,6 +165,49 @@ def create_spliit_expense(receipt_id: str):
     ok, message = ingest.settle_receipt(receipt_id)
     flash(message)
     return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
+@app.post("/receipts/<receipt_id>/spliit-advanced")
+def create_spliit_expense_advanced(receipt_id: str):
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        abort(404)
+    if receipt.status == "settled":
+        flash("Receipt is already settled; not creating a duplicate expense.")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+    items = _parse_items_from_form()
+    if items:
+        db.replace_items(receipt_id, items)
+    _learn_from_form(items)
+
+    ok, message = ingest.settle_receipt_advanced(receipt_id)
+    flash(message)
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
+@app.get("/api/participants")
+def api_participants():
+    """Group participants from Spliit, for the advanced-split UI (cached)."""
+    try:
+        participants = _cached_participants()
+    except Exception as exc:
+        logger.warning("Could not load Spliit participants: %s", exc)
+        return jsonify({"error": str(exc)}), 502
+    return jsonify([{"id": p.id, "name": p.name} for p in participants])
+
+
+_participants_cache: dict = {"at": 0.0, "value": None}
+
+
+def _cached_participants(ttl: int = 300):
+    import time
+    from receipts import spliit
+    now = time.time()
+    if _participants_cache["value"] is None or now - _participants_cache["at"] > ttl:
+        _participants_cache["value"] = spliit.get_participants()
+        _participants_cache["at"] = now
+    return _participants_cache["value"]
 
 
 def _learn_from_form(items: list[dict]) -> None:
