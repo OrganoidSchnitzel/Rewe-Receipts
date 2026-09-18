@@ -230,6 +230,14 @@ def mark_settled(receipt_id: str, spliit_expense_id: str) -> None:
         )
 
 
+def set_status(receipt_id: str, status: str) -> None:
+    """Set a receipt's status (e.g. 'dismissed' or back to 'pending')."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE receipts SET status = ? WHERE id = ?", (status, receipt_id)
+        )
+
+
 # --- Receipt reads -----------------------------------------------------------
 
 def _row_to_receipt(row: sqlite3.Row) -> Receipt:

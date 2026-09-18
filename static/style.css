@@ -170,6 +170,7 @@ code { background: var(--surface-2); padding: 0.08rem 0.35rem; border-radius: 6p
 .pill::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
 .pill-settled { color: var(--ok); background: var(--ok-soft); }
 .pill-pending { color: var(--pending); background: var(--pending-soft); }
+.pill-dismissed { color: var(--muted); background: var(--surface-2); }
 
 /* --- Receipt list --------------------------------------------------------- */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; flex-wrap: wrap; }

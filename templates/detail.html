@@ -3,6 +3,7 @@
 {% block title %}{{ receipt.store or receipt.source|upper }}{% endblock %}
 
 {% block content %}
+  {% set editable = receipt.status == 'pending' %}
   <a href="{{ url_for('index') }}" class="back-link">← All receipts</a>
 
   <div class="detail-header">
@@ -47,7 +48,7 @@
         <div class="items-head">
           <h2>Items</h2>
           <div class="items-head-actions">
-            {% if receipt.status != 'settled' %}
+            {% if editable %}
               <button type="button" id="advanced-toggle" class="btn-ghost" aria-pressed="false"
                       title="Assign items to people">⚙ Advanced split</button>
               <label class="select-all-label">
@@ -75,12 +76,12 @@
                 <input type="checkbox" name="included" value="{{ idx }}"
                        class="include-cb"
                        {% if item.included %}checked{% endif %}
-                       {% if receipt.status == 'settled' %}disabled{% endif %} />
+                       {% if not editable %}disabled{% endif %} />
               </td>
               <td>
                 <div class="item-name-cell">
                   <input type="text" name="name_{{ idx }}" value="{{ item.name }}"
-                         {% if receipt.status == 'settled' %}readonly{% endif %} />
+                         {% if not editable %}readonly{% endif %} />
                   {% if item.source_method == 'ollama' %}
                     <span class="src src-ai" title="Extracted by the AI fallback — confirm it and it's learned for next time">AI</span>
                   {% elif item.source_method == 'known' %}
@@ -97,12 +98,12 @@
                 <input type="number" step="0.001" name="quantity_{{ idx }}"
                        value="{{ item.quantity|round(3)|int if item.quantity == item.quantity|int else item.quantity }}"
                        class="qty"
-                       {% if receipt.status == 'settled' %}readonly{% endif %} />
+                       {% if not editable %}readonly{% endif %} />
               </td>
               <td class="num">
                 <input type="number" step="0.01" name="total_price_{{ idx }}"
                        value="{{ "%.2f"|format(item.total_price) }}" class="price"
-                       {% if receipt.status == 'settled' %}readonly{% endif %} />
+                       {% if not editable %}readonly{% endif %} />
               </td>
               <input type="hidden" name="raw_line_{{ idx }}" value="{{ item.raw_line or '' }}" />
               <input type="hidden" name="source_method_{{ idx }}" value="{{ item.source_method }}" />
@@ -123,7 +124,7 @@
             <strong id="running-total">€{{ "%.2f"|format(included_total) }}</strong>
             <span class="subtle">of €{{ "%.2f"|format(receipt.total_amount) }}</span>
           </div>
-          {% if receipt.status != 'settled' %}
+          {% if editable %}
             <div class="actionbar-btns">
               <button type="submit" class="btn"
                       formaction="{{ url_for('save_receipt', receipt_id=receipt.id) }}">Save</button>
@@ -136,6 +137,8 @@
                 Create split expense
               </button>
             </div>
+          {% elif receipt.status == 'dismissed' %}
+            <span class="settled-note">Dismissed · nothing shared</span>
           {% else %}
             <span class="settled-note">Settled to Spliit · read-only</span>
           {% endif %}
@@ -143,9 +146,16 @@
       </form>
 
       <div class="footer-actions">
-        {% if receipt.status != 'settled' %}
+        {% if editable %}
         <form method="post" action="{{ url_for('reextract_receipt', receipt_id=receipt.id) }}" class="nav-form">
           <button type="submit" class="link">↻ Re-extract from source</button>
+        </form>
+        <form method="post" action="{{ url_for('dismiss_receipt', receipt_id=receipt.id) }}" class="nav-form">
+          <button type="submit" class="link">🚫 Dismiss (nothing to share)</button>
+        </form>
+        {% elif receipt.status == 'dismissed' %}
+        <form method="post" action="{{ url_for('reopen_receipt', receipt_id=receipt.id) }}" class="nav-form">
+          <button type="submit" class="link">↺ Reopen</button>
         </form>
         {% endif %}
         <form method="post" action="{{ url_for('delete_receipt', receipt_id=receipt.id) }}"

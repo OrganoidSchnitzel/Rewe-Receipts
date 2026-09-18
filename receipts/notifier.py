@@ -135,11 +135,15 @@ def notify_new_receipt(
     reply_markup = None
     if config.TELEGRAM_TWO_WAY:
         # Approve creates the Spliit expense for all items straight from the chat;
-        # the URL button opens the web UI to review/edit first.
+        # Dismiss marks it handled with nothing shared; the URL button opens the
+        # web UI to review/edit first.
         row = [{"text": "✅ Approve & split", "callback_data": f"approve:{receipt_id}"}]
         if link:
             row.append({"text": "✏️ Review", "url": link})
-        reply_markup = {"inline_keyboard": [row]}
+        reply_markup = {"inline_keyboard": [
+            row,
+            [{"text": "🚫 Dismiss (nothing to share)", "callback_data": f"dismiss:{receipt_id}"}],
+        ]}
     elif link:
         lines.append(f'<a href="{_esc(link)}">Open receipt →</a>')
 

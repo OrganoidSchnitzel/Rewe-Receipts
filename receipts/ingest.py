@@ -290,8 +290,8 @@ def settle_receipt(receipt_id: str) -> tuple[bool, str]:
     receipt = db.get_receipt(receipt_id)
     if not receipt:
         return False, "Receipt not found."
-    if receipt.status == "settled":
-        return False, "Already settled."
+    if receipt.status != "pending":
+        return False, f"Receipt is already {receipt.status}."
 
     included = [i for i in receipt.items if i.included]
     if not included:
@@ -346,8 +346,8 @@ def settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
     receipt = db.get_receipt(receipt_id)
     if not receipt:
         return False, "Receipt not found."
-    if receipt.status == "settled":
-        return False, "Already settled."
+    if receipt.status != "pending":
+        return False, f"Receipt is already {receipt.status}."
 
     included = [i for i in receipt.items if i.included]
     if not included:
@@ -386,3 +386,31 @@ def settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
         for pid, c in cents.items() if c > 0
     )
     return True, f"Created Spliit expense — {breakdown}."
+
+
+def dismiss_receipt(receipt_id: str) -> tuple[bool, str]:
+    """Mark a receipt handled with nothing shared (no Spliit expense created).
+
+    Like deselecting every item: the receipt leaves 'pending' without creating
+    an expense. Idempotent and only applies to pending receipts.
+    """
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        return False, "Receipt not found."
+    if receipt.status == "dismissed":
+        return False, "Already dismissed."
+    if receipt.status != "pending":
+        return False, f"Receipt is already {receipt.status}."
+    db.set_status(receipt_id, "dismissed")
+    return True, "Dismissed — nothing shared."
+
+
+def reopen_receipt(receipt_id: str) -> tuple[bool, str]:
+    """Return a dismissed receipt to 'pending' so it can be handled again."""
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        return False, "Receipt not found."
+    if receipt.status != "dismissed":
+        return False, "Only dismissed receipts can be reopened."
+    db.set_status(receipt_id, "pending")
+    return True, "Reopened."
