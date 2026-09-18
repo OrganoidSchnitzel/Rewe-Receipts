@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Add a receipt{% endblock %}
+
+{% block content %}
+  <a href="{{ url_for('index') }}" class="back-link">← All receipts</a>
+
+  <section class="form-card card-pad">
+    <h1>Add a receipt manually</h1>
+    <p class="subtle">
+      Paste Paperless OCR text, upload a receipt PDF, or paste a Lidl Plus API
+      JSON response. It's reviewed like any imported receipt.
+    </p>
+
+    <form action="{{ url_for('manual_submit') }}" method="post" enctype="multipart/form-data" class="form">
+      <div class="field">
+        <label for="store_source">Source</label>
+        <select id="store_source" name="store_source">
+          <option value="rewe" selected>REWE (paperless-ngx OCR / PDF)</option>
+          <option value="lidl">Lidl (Plus API JSON)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="receipt_pdf">Receipt PDF <span class="subtle">(optional)</span></label>
+        <input id="receipt_pdf" name="receipt_pdf" type="file" accept="application/pdf" />
+      </div>
+      <div class="field">
+        <label for="receipt_text">Receipt text / Lidl JSON</label>
+        <textarea id="receipt_text" name="receipt_text" rows="12"
+                  placeholder="Paste OCR text or Lidl API JSON here…"></textarea>
+      </div>
+      <div class="field">
+        <label for="external_id">External id <span class="subtle">(optional, for de-duplication)</span></label>
+        <input id="external_id" name="external_id" type="text" placeholder="e.g. lidl:abc123" />
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Parse &amp; review</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
