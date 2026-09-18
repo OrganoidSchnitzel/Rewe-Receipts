@@ -69,16 +69,23 @@ def _handle_update(update: dict) -> None:
         return
 
     data = callback.get("data") or ""
-    if not data.startswith("approve:"):
+    if ":" not in data:
+        notifier.answer_callback(callback["id"], "")
+        return
+    action, receipt_id = data.split(":", 1)
+    if action not in ("approve", "dismiss"):
         notifier.answer_callback(callback["id"], "")
         return
 
-    receipt_id = data.split(":", 1)[1]
     from . import ingest  # lazy import avoids a circular import at module load
 
-    ok, result = ingest.settle_receipt(receipt_id)
+    if action == "approve":
+        ok, result = ingest.settle_receipt(receipt_id)
+        confirm = f"✅ {notifier._esc(result)}"
+    else:  # dismiss
+        ok, result = ingest.dismiss_receipt(receipt_id)
+        confirm = f"🚫 {notifier._esc(result)}"
+
     notifier.answer_callback(callback["id"], result)
     if ok and message.get("message_id"):
-        notifier.edit_message(
-            chat["id"], message["message_id"], f"✅ {notifier._esc(result)}"
-        )
+        notifier.edit_message(chat["id"], message["message_id"], confirm)

@@ -46,6 +46,18 @@ class TelegramCallbackTests(unittest.TestCase):
         settle.assert_not_called()
         self.assertIn("authorized", answer.call_args[0][1].lower())
 
+    def test_dismiss_marks_and_edits(self) -> None:
+        with mock.patch("receipts.ingest.dismiss_receipt",
+                        return_value=(True, "Dismissed — nothing shared.")) as dismiss, \
+             mock.patch("receipts.ingest.settle_receipt") as settle, \
+             mock.patch.object(notifier, "answer_callback") as answer, \
+             mock.patch.object(notifier, "edit_message") as edit:
+            telegram_bot._handle_update(self._update("dismiss:abc123"))
+        dismiss.assert_called_once_with("abc123")
+        settle.assert_not_called()
+        answer.assert_called_once()
+        self.assertIn("🚫", edit.call_args[0][2])
+
     def test_non_approve_callback_ignored(self) -> None:
         with mock.patch("receipts.ingest.settle_receipt") as settle, \
              mock.patch.object(notifier, "answer_callback") as answer:

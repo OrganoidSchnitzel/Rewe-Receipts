@@ -121,6 +121,24 @@ def reextract_receipt(receipt_id: str):
     return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 
 
+@app.post("/receipts/<receipt_id>/dismiss")
+def dismiss_receipt(receipt_id: str):
+    if not db.get_receipt(receipt_id):
+        abort(404)
+    ok, message = ingest.dismiss_receipt(receipt_id)
+    flash(message)
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
+@app.post("/receipts/<receipt_id>/reopen")
+def reopen_receipt(receipt_id: str):
+    if not db.get_receipt(receipt_id):
+        abort(404)
+    ok, message = ingest.reopen_receipt(receipt_id)
+    flash(message)
+    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+
+
 @app.post("/receipts/<receipt_id>/delete")
 def delete_receipt(receipt_id: str):
     external_id = db.delete_receipt(receipt_id)

@@ -86,6 +86,7 @@ docker compose up -d
   > 11 items · €37.89
   > _Banane lose, Orangen, …_
   > [ ✅ Approve & split ] [ ✏️ Review ]
+  > [ 🚫 Dismiss (nothing to share) ]
 
 - **Two-way check:** press **✅ Approve & split**. The bot creates the Spliit
   expense for the receipt's items and edits the message to
@@ -100,6 +101,7 @@ docker compose up -d
 |--------|--------|
 | **✅ Approve & split** | Creates the Spliit expense for all of the receipt's included items, with your default split (you as payer, even split), and marks it settled. |
 | **✏️ Review** | Opens the receipt in the web UI so you can tick/untick or correct items before creating the expense. |
+| **🚫 Dismiss (nothing to share)** | Marks the receipt handled without creating any expense (the same as deselecting every item). It leaves "pending" and no Spliit expense is made. Reversible: reopen it from the web UI. |
 
 **Safety built in:**
 - Only button presses from your `TELEGRAM_CHAT_ID` are honored — anyone else

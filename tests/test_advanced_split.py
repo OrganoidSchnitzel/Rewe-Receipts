@@ -142,7 +142,7 @@ class SettleAdvancedTests(unittest.TestCase):
             self.ingest.settle_receipt_advanced(rid)
             ok, msg = self.ingest.settle_receipt_advanced(rid)
         self.assertFalse(ok)
-        self.assertIn("Already settled", msg)
+        self.assertIn("already settled", msg)
         ce.assert_called_once()
 
 
