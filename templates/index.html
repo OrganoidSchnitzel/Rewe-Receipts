@@ -13,8 +13,12 @@
     </div>
     <div class="head-right">
       {% if receipts %}
-        <div class="count-chip">{{ receipts|length }} total ·
-          {{ receipts|selectattr('status', 'equalto', 'pending')|list|length }} pending</div>
+        {% set pending = receipts|selectattr('status', 'equalto', 'pending')|list|length %}
+        <div class="segmented" role="group" aria-label="Filter receipts">
+          <button type="button" class="seg-btn" data-filter="all" aria-pressed="true">All <span class="seg-count">{{ receipts|length }}</span></button>
+          <button type="button" class="seg-btn" data-filter="pending" aria-pressed="false">Pending <span class="seg-count{% if pending %} hot{% endif %}">{{ pending }}</span></button>
+          <button type="button" class="seg-btn" data-filter="done" aria-pressed="false">Done <span class="seg-count">{{ receipts|length - pending }}</span></button>
+        </div>
         <div class="view-toggle" role="group" aria-label="View mode">
           <button type="button" class="vt-btn" data-view="list" aria-pressed="true" title="List view">
             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2 3h12v2H2zM2 7h12v2H2zM2 11h12v2H2z"/></svg>
@@ -30,8 +34,9 @@
   {% if receipts %}
     <div class="receipt-view" id="receipt-view" data-view="list">
       {% for receipt in receipts %}
-      <a class="receipt-card" href="{{ url_for('receipt_detail', receipt_id=receipt.id) }}">
-        <span class="badge badge-{{ receipt.source }}">{{ receipt.source|upper }}</span>
+      <a class="receipt-card" href="{{ url_for('receipt_detail', receipt_id=receipt.id) }}"
+         data-status="{{ 'pending' if receipt.status == 'pending' else 'done' }}">
+        <span class="store-mark store-{{ receipt.source }}" title="{{ receipt.source|upper }}">{{ receipt.source[:1]|upper }}</span>
         <div class="rc-body">
           <span class="rc-store">{{ receipt.store or receipt.source|upper }}</span>
           <span class="rc-sub">{{ (receipt.purchase_date or receipt.created_at)[:10] }} ·
@@ -43,6 +48,11 @@
         </div>
       </a>
       {% endfor %}
+    </div>
+    <div class="empty empty-filtered" id="empty-filtered" hidden>
+      <div class="empty-icon">🎉</div>
+      <h2>All caught up</h2>
+      <p class="subtle">No receipts waiting for review.</p>
     </div>
   {% else %}
     <div class="empty">
@@ -59,6 +69,29 @@
       const view = document.getElementById('receipt-view');
       const btns = document.querySelectorAll('.vt-btn');
       if (!view || !btns.length) return;
+
+      // Status filter (All / Pending / Done), remembered per browser.
+      const segs = document.querySelectorAll('.seg-btn');
+      const emptyFiltered = document.getElementById('empty-filtered');
+      function filter(mode) {
+        let shown = 0;
+        view.querySelectorAll('.receipt-card').forEach(function (card) {
+          const show = mode === 'all' || card.dataset.status === mode;
+          card.hidden = !show;
+          if (show) shown += 1;
+        });
+        emptyFiltered.hidden = shown > 0;
+        segs.forEach(s => s.setAttribute('aria-pressed', s.dataset.filter === mode ? 'true' : 'false'));
+      }
+      let savedFilter = 'all';
+      try { savedFilter = localStorage.getItem('receiptFilter') || 'all'; } catch (e) {}
+      filter(savedFilter);
+      segs.forEach(function (s) {
+        s.addEventListener('click', function () {
+          filter(s.dataset.filter);
+          try { localStorage.setItem('receiptFilter', s.dataset.filter); } catch (e) {}
+        });
+      });
       let saved = 'list';
       try { saved = localStorage.getItem('receiptView') || 'list'; } catch (e) {}
       apply(saved);

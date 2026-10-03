@@ -21,11 +21,11 @@
         <a href="{{ url_for('index') }}">Receipts</a>
         <a href="{{ url_for('manual_form') }}">Add</a>
         <form action="{{ url_for('manual_poll') }}" method="post" class="nav-form">
-          <button type="submit" class="btn-ghost">Poll Paperless</button>
+          <button type="submit" class="btn-ghost" title="Check Paperless for new Rewe receipts">↻ <span class="hide-sm">Poll </span>Paperless</button>
         </form>
         {% if lidl_enabled %}
         <form action="{{ url_for('manual_poll_lidl') }}" method="post" class="nav-form">
-          <button type="submit" class="btn-ghost">Poll Lidl</button>
+          <button type="submit" class="btn-ghost" title="Check Lidl Plus for new receipts">↻ <span class="hide-sm">Poll </span>Lidl</button>
         </form>
         {% endif %}
       </nav>
