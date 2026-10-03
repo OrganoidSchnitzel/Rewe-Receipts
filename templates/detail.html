@@ -307,6 +307,27 @@
 
       form.addEventListener('input', recalc);
       form.addEventListener('change', recalc);
+
+      // One submission per page load: a double-click on "Create Spliit expense"
+      // must not send two requests. (The server is idempotent too; this just
+      // avoids the second request.) Disabling is deferred so the clicked
+      // button's formaction still applies to the submission in flight.
+      let submitting = false;
+      form.addEventListener('submit', function (e) {
+        if (submitting) { e.preventDefault(); return; }
+        submitting = true;
+        setTimeout(function () {
+          form.querySelectorAll('button[type="submit"]').forEach(b => b.disabled = true);
+        }, 0);
+      });
+      // Coming back via the browser's back button restores this page from
+      // cache with the buttons still disabled; reset them.
+      window.addEventListener('pageshow', function (e) {
+        if (!e.persisted) return;
+        submitting = false;
+        form.querySelectorAll('button[type="submit"]').forEach(b => b.disabled = false);
+        recalc();  // re-disables the Spliit buttons if nothing is selected
+      });
       recalc();
     })();
   </script>

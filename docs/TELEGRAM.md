@@ -103,11 +103,27 @@ docker compose up -d
 | **✏️ Review** | Opens the receipt in the web UI so you can tick/untick or correct items before creating the expense. |
 | **🚫 Dismiss (nothing to share)** | Marks the receipt handled without creating any expense (the same as deselecting every item). It leaves "pending" and no Spliit expense is made. Reversible: reopen it from the web UI. |
 
+**The message follows the receipt.** However a receipt is handled, in the chat
+or in the web UI after tapping **Review**, its message is updated in place:
+
+| Receipt state | Message shows |
+|---------------|---------------|
+| settled | `✅ … · shared to Spliit` with the result (e.g. the per-person split), no buttons |
+| dismissed | `🚫 … · dismissed, nothing shared`, no buttons |
+| reopened | back to `🧾 New …` with all three buttons |
+| deleted | `🗑 … · deleted`, no buttons |
+
+(Telegram doesn't tell the bot when **Review** is tapped, since it's a plain
+link, so the message changes when you actually *do* something with the receipt,
+not when you open it.) Notifications sent before this feature existed get linked
+the first time you tap one of their buttons.
+
 **Safety built in:**
 - Only button presses from your `TELEGRAM_CHAT_ID` are honored — anyone else
   gets "Not authorized".
 - Approving is **idempotent**: a receipt that's already settled is never charged
-  twice, so a stray or repeated tap does nothing.
+  twice, even if you tap Approve while also settling it in the web UI. A stray
+  or stale tap changes nothing; it just refreshes the message to the current state.
 
 ## Troubleshooting
 

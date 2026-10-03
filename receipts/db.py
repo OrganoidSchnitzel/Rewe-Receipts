@@ -61,7 +61,8 @@ def init_db() -> None:
                 total_amount      REAL NOT NULL DEFAULT 0,
                 status            TEXT NOT NULL DEFAULT 'pending',
                 spliit_expense_id TEXT,
-                created_at        TEXT NOT NULL
+                created_at        TEXT NOT NULL,
+                telegram_message_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS items (
@@ -100,6 +101,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
     if "assignees" not in cols:
         conn.execute("ALTER TABLE items ADD COLUMN assignees TEXT NOT NULL DEFAULT ''")
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(receipts)")}
+    if "telegram_message_id" not in cols:
+        conn.execute("ALTER TABLE receipts ADD COLUMN telegram_message_id INTEGER")
 
 
 # --- Duplicate detection -----------------------------------------------------
@@ -181,20 +185,21 @@ def create_receipt(
     return receipt_id
 
 
-def replace_items(receipt_id: str, items: list[dict]) -> None:
+def replace_items(
+    receipt_id: str, items: list[dict], total_amount: Optional[float] = None
+) -> None:
     """Replace a receipt's items with the edited set from the UI.
 
     ``items`` is a list of dicts: name, quantity, unit_price, total_price,
-    included. Also refreshes the receipt total to the sum of *included* items.
+    included. The receipt total is the *printed* receipt total and is kept as
+    is (the UI compares the selection against it); pass ``total_amount`` to
+    change it, e.g. after re-extracting from source.
     """
     with connect() as conn:
         conn.execute("DELETE FROM items WHERE receipt_id = ?", (receipt_id,))
-        total = 0.0
         for position, item in enumerate(items):
             included = 1 if item.get("included") else 0
             total_price = float(item.get("total_price", 0) or 0)
-            if included:
-                total += total_price
             conn.execute(
                 """
                 INSERT INTO items
@@ -216,10 +221,11 @@ def replace_items(receipt_id: str, items: list[dict]) -> None:
                     ",".join(item.get("assignees") or []),
                 ),
             )
-        conn.execute(
-            "UPDATE receipts SET total_amount = ? WHERE id = ?",
-            (round(total, 2), receipt_id),
-        )
+        if total_amount is not None:
+            conn.execute(
+                "UPDATE receipts SET total_amount = ? WHERE id = ?",
+                (round(total_amount, 2), receipt_id),
+            )
 
 
 def mark_settled(receipt_id: str, spliit_expense_id: str) -> None:
@@ -238,6 +244,16 @@ def set_status(receipt_id: str, status: str) -> None:
         )
 
 
+def set_telegram_message(receipt_id: str, message_id: int) -> None:
+    """Remember the Telegram notification for a receipt, so it can be updated
+    when the receipt is handled elsewhere (e.g. settled in the web UI)."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE receipts SET telegram_message_id = ? WHERE id = ?",
+            (message_id, receipt_id),
+        )
+
+
 # --- Receipt reads -----------------------------------------------------------
 
 def _row_to_receipt(row: sqlite3.Row) -> Receipt:
@@ -252,6 +268,7 @@ def _row_to_receipt(row: sqlite3.Row) -> Receipt:
         status=row["status"],
         spliit_expense_id=row["spliit_expense_id"],
         created_at=row["created_at"],
+        telegram_message_id=row["telegram_message_id"],
     )
 
 

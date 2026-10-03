@@ -5,7 +5,7 @@ imported by an earlier build:
 
     docker compose exec receipt-importer python -m receipts.reextract
 
-Settled receipts and manual entries are left untouched.
+Settled / dismissed receipts and manual entries are left untouched.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def main() -> None:
     db.init_db()
     updated, skipped = ingest.reextract_all()
     print(f"Re-extracted {updated} receipt(s); skipped {skipped} "
-          f"(settled / manual / no source).")
+          f"(settled / dismissed / manual / no source).")
 
 
 if __name__ == "__main__":

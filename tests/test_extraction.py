@@ -2,6 +2,7 @@ import unittest
 
 from receipts.extraction import (
     extract_rewe_items,
+    extract_rewe_total,
     normalize_line,
     parse_lidl_receipt,
     parse_ollama_response,
@@ -78,6 +79,22 @@ PIZZA CL.TEX-MEX        2,19 B
     def test_weight_breakdown_is_not_an_item(self) -> None:
         self.assertIsNone(parse_rewe_line("0,234 kg x 5,99 EUR/kg"))
         self.assertIsNone(parse_rewe_line("3 Stk x 1,29"))
+
+
+class ReweTotalTests(unittest.TestCase):
+    def test_reads_summe_line(self) -> None:
+        self.assertEqual(4.48, extract_rewe_total("BANANEN 1,99 A\nBROT 2,49 A\nSUMME 4,48"))
+
+    def test_reads_spaced_summe_with_currency(self) -> None:
+        text = "SKYR NATUR 3,87 B\nSUMME              EUR   16,31\nGeg. VISA EUR 13,27"
+        self.assertEqual(16.31, extract_rewe_total(text))
+
+    def test_first_total_line_wins_over_payment_lines(self) -> None:
+        text = "A 1,00 A\nSUMME EUR 1,00\nGesamtbetrag 99,99"
+        self.assertEqual(1.00, extract_rewe_total(text))
+
+    def test_none_without_a_total_line(self) -> None:
+        self.assertIsNone(extract_rewe_total("BANANEN 1,99 A\nBROT 2,49 A"))
 
 
 class KnownItemsTests(unittest.TestCase):

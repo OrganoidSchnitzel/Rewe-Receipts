@@ -59,7 +59,9 @@ class DuplicateDetectionTests(DbTestCase):
 
 
 class EditAndSettleTests(DbTestCase):
-    def test_replace_items_updates_total_from_included(self) -> None:
+    def test_replace_items_keeps_the_receipt_total(self) -> None:
+        # Deselecting items must not rewrite the printed receipt total — the UI
+        # compares the selection against it to flag missed/misread lines.
         rid = self.db.create_receipt(
             source="rewe", external_id="rewe:2", items=self._items()
         )
@@ -70,9 +72,18 @@ class EditAndSettleTests(DbTestCase):
              "total_price": 2.49, "included": False},
         ])
         receipt = self.db.get_receipt(rid)
-        self.assertAlmostEqual(1.29, receipt.total_amount, places=2)
+        self.assertAlmostEqual(3.78, receipt.total_amount, places=2)
         self.assertTrue(receipt.items[0].included)
         self.assertFalse(receipt.items[1].included)
+
+    def test_replace_items_can_set_a_new_total(self) -> None:
+        rid = self.db.create_receipt(
+            source="rewe", external_id="rewe:2b", items=self._items()
+        )
+        self.db.replace_items(rid, [
+            {"name": "MILCH", "total_price": 1.29, "included": True},
+        ], total_amount=9.99)
+        self.assertAlmostEqual(9.99, self.db.get_receipt(rid).total_amount, places=2)
 
     def test_mark_settled(self) -> None:
         rid = self.db.create_receipt(
