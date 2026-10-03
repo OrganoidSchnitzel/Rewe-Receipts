@@ -3,6 +3,7 @@
 {% block title %}Add a receipt{% endblock %}
 
 {% block content %}
+  <div class="form-wrap">
   <a href="{{ url_for('index') }}" class="back-link">← All receipts</a>
 
   <section class="form-card card-pad">
@@ -38,4 +39,5 @@
       </div>
     </form>
   </section>
+  </div>
 {% endblock %}

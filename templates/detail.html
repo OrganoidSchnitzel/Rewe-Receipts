@@ -4,6 +4,7 @@
 
 {% block content %}
   {% set editable = receipt.status == 'pending' %}
+  <div class="detail{% if not receipt.file_path %} narrow{% endif %}">
   <a href="{{ url_for('index') }}" class="back-link">← All receipts</a>
 
   <div class="detail-header">
@@ -24,21 +25,16 @@
     </div>
   </div>
 
-  <div class="detail-grid">
+  <div class="detail-grid{% if not receipt.file_path %} single{% endif %}">
+    {% if receipt.file_path %}
     <section class="viewer card-pad">
-      {% if receipt.file_path %}
-        <object data="{{ url_for('receipt_file', receipt_id=receipt.id) }}"
-                type="application/pdf">
-          <p>Cannot display the PDF inline.
-            <a href="{{ url_for('receipt_file', receipt_id=receipt.id) }}">Open the receipt file</a>.</p>
-        </object>
-      {% else %}
-        <div class="no-file">
-          <div class="no-file-icon">📄</div>
-          No receipt file stored{% if receipt.source == 'lidl' %} (Lidl receipts are data-only){% endif %}.
-        </div>
-      {% endif %}
+      <object data="{{ url_for('receipt_file', receipt_id=receipt.id) }}"
+              type="application/pdf">
+        <p>Cannot display the PDF inline.
+          <a href="{{ url_for('receipt_file', receipt_id=receipt.id) }}">Open the receipt file</a>.</p>
+      </object>
     </section>
+    {% endif %}
 
     <section class="items-panel card-pad" id="items-panel" data-advanced="0">
       <form method="post" id="items-form">
@@ -52,14 +48,14 @@
               <button type="button" id="advanced-toggle" class="btn-ghost" aria-pressed="false"
                       title="Assign items to people">⚙ Advanced split</button>
               <label class="select-all-label">
-                <input type="checkbox" id="select-all" title="Select all / none" />
+                <input type="checkbox" id="select-all" class="check" title="Select all / none" />
                 <span>All</span>
               </label>
             {% endif %}
           </div>
         </div>
 
-        <table class="items">
+        <table class="items{% if not editable %} readonly{% endif %}">
           <thead>
             <tr>
               <th class="cb-col"></th>
@@ -74,7 +70,7 @@
             <tr class="{% if not item.included %}excluded{% endif %}">
               <td class="cb-col">
                 <input type="checkbox" name="included" value="{{ idx }}"
-                       class="include-cb"
+                       class="include-cb check" aria-label="Include {{ item.name }}"
                        {% if item.included %}checked{% endif %}
                        {% if not editable %}disabled{% endif %} />
               </td>
@@ -138,33 +134,34 @@
               </button>
             </div>
           {% elif receipt.status == 'dismissed' %}
-            <span class="settled-note">Dismissed · nothing shared</span>
+            <span class="state-note state-dismissed">🚫 Dismissed · nothing shared</span>
           {% else %}
-            <span class="settled-note">Settled to Spliit · read-only</span>
+            <span class="state-note state-settled">✓ Shared to Spliit · read-only</span>
           {% endif %}
         </div>
       </form>
 
       <div class="footer-actions">
         {% if editable %}
-        <form method="post" action="{{ url_for('reextract_receipt', receipt_id=receipt.id) }}" class="nav-form">
-          <button type="submit" class="link">↻ Re-extract from source</button>
-        </form>
         <form method="post" action="{{ url_for('dismiss_receipt', receipt_id=receipt.id) }}" class="nav-form">
-          <button type="submit" class="link">🚫 Dismiss (nothing to share)</button>
+          <button type="submit" class="btn-quiet">🚫 Nothing to share</button>
+        </form>
+        <form method="post" action="{{ url_for('reextract_receipt', receipt_id=receipt.id) }}" class="nav-form">
+          <button type="submit" class="btn-quiet">↻ Re-extract</button>
         </form>
         {% elif receipt.status == 'dismissed' %}
         <form method="post" action="{{ url_for('reopen_receipt', receipt_id=receipt.id) }}" class="nav-form">
-          <button type="submit" class="link">↺ Reopen</button>
+          <button type="submit" class="btn-quiet">↺ Reopen</button>
         </form>
         {% endif %}
         <form method="post" action="{{ url_for('delete_receipt', receipt_id=receipt.id) }}"
-              class="nav-form"
+              class="nav-form push-right"
               onsubmit="return confirm('Delete this receipt? A Rewe document will be re-imported on the next poll.');">
-          <button type="submit" class="link link-danger">Delete</button>
+          <button type="submit" class="btn-quiet danger">Delete</button>
         </form>
       </div>
     </section>
+  </div>
   </div>
 
   <script>
@@ -234,12 +231,16 @@
           ids.forEach(function (pid, i) { totals[pid] += base + (i < rem ? 1 : 0); });
         });
         summaryEl.innerHTML = participants
-          .filter(p => totals[p.id] !== 0)
-          .map(p => '<span class="who"><b>' + escapeHtml(p.name) + '</b> €' + (totals[p.id] / 100).toFixed(2) + '</span>')
+          .map((p, i) => [p, i])
+          .filter(([p]) => totals[p.id] !== 0)
+          .map(([p, i]) => '<span class="who" style="--c:' + personColor(i) + '">' + avatar(p.name) +
+            '<span><b>' + escapeHtml(p.name) + '</b><span class="who-amt">€' + (totals[p.id] / 100).toFixed(2) + '</span></span></span>')
           .join('');
       }
 
       function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+      function personColor(i) { return 'var(--person-' + (i % 4) + ')'; }
+      function avatar(name) { return '<span class="avatar" aria-hidden="true">' + escapeHtml((name || '?').trim().charAt(0).toUpperCase()) + '</span>'; }
 
       // --- build the assignee chips for every item once participants load ---
       function buildChips() {
@@ -248,12 +249,13 @@
           const idx = box.dataset.index;
           const selected = (box.dataset.selected || '').split(',').filter(Boolean);
           box.innerHTML = '';
-          participants.forEach(function (p) {
+          participants.forEach(function (p, i) {
             const checked = selected.length ? selected.includes(p.id) : true; // default: everyone
             const label = document.createElement('label');
             label.className = 'chip' + (checked ? ' on' : '');
+            label.style.setProperty('--c', personColor(i));
             label.innerHTML = '<input type="checkbox" class="chip-cb" name="assignees_' + idx + '" value="' +
-              p.id + '"' + (checked ? ' checked' : '') + ' hidden> ' + escapeHtml(p.name);
+              p.id + '"' + (checked ? ' checked' : '') + ' hidden>' + avatar(p.name) + escapeHtml(p.name);
             const cb = label.querySelector('input');
             cb.addEventListener('change', function () {
               // keep at least one selected
@@ -305,8 +307,23 @@
         });
       }
 
-      form.addEventListener('input', recalc);
-      form.addEventListener('change', recalc);
+      // Skip the select-all box itself: its own handler updates the items and
+      // recalcs. Recalculating on its 'input' event (which fires before
+      // 'change') would re-tick it from the still-unchanged items and undo
+      // the click.
+      function onFormEvent(e) { if (e.target !== selectAll) recalc(); }
+      form.addEventListener('input', onFormEvent);
+      form.addEventListener('change', onFormEvent);
+
+      // Tap anywhere on a row (outside its inputs) to include/exclude it.
+      form.querySelector('tbody').addEventListener('click', function (e) {
+        if (e.target.closest('input, label, button, a')) return;
+        const row = e.target.closest('tr');
+        const cb = row && row.querySelector('.include-cb');
+        if (!cb || cb.disabled) return;
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      });
 
       // One submission per page load: a double-click on "Create Spliit expense"
       // must not send two requests. (The server is idempotent too; this just
