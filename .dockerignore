@@ -1,0 +1,17 @@
+# Keep secrets and local state out of the image. `.env` is passed at runtime
+# via `env_file:` in docker-compose.yml — it must never be baked into a layer.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+data/
+*.db
+*.sqlite3
+*.pid
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+tests/

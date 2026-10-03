@@ -11,11 +11,18 @@ Both trigger paths (webhook push, polling fallback) funnel through
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Optional
 
 from . import config, db, extraction, lidl, notifier, paperless, spliit
 
 logger = logging.getLogger(__name__)
+
+# Serializes receipt state changes (settle / dismiss / reopen / delete). The web
+# server is threaded and the Telegram bot runs in its own thread, so without
+# this a double-clicked button — or an Approve tap while the web UI is settling
+# — could both see "pending" and create two Spliit expenses.
+_state_lock = threading.RLock()
 
 
 def rewe_external_id(document_id: int) -> str:
@@ -60,6 +67,9 @@ def ingest_rewe_document(document_id: int) -> Optional[str]:
         purchase_date=purchase_date,
         store="REWE",
         file_path=file_path,
+        # The printed SUMME, so the UI can flag items the parser missed; falls
+        # back to the item sum when no total line was recognized.
+        total_amount=extraction.extract_rewe_total(ocr_text),
     )
     if receipt_id is None:
         logger.info("Concurrent import of Rewe document %s; skipped", document_id)
@@ -78,11 +88,7 @@ def ingest_rewe_document(document_id: int) -> Optional[str]:
         logger.warning("Could not tag Paperless document %s as processed: %s",
                        document_id, exc)
 
-    total = round(sum(i.total_price for i in items), 2)
-    notifier.notify_new_receipt(
-        receipt_id, "REWE receipt", len(items), total,
-        top_items=[i.name for i in items],
-    )
+    notifier.notify_new_receipt(db.get_receipt(receipt_id))
     return receipt_id
 
 
@@ -147,11 +153,7 @@ def ingest_lidl_receipt(receipt: "lidl.LidlReceipt") -> Optional[str]:
         "Imported Lidl receipt %s as %s (%d items)",
         receipt.external_id, receipt_id, len(receipt.items),
     )
-    notifier.notify_new_receipt(
-        receipt_id, receipt.store or "Lidl receipt",
-        len(receipt.items), receipt.total_amount,
-        top_items=[i.name for i in receipt.items],
-    )
+    notifier.notify_new_receipt(db.get_receipt(receipt_id))
     return receipt_id
 
 
@@ -212,11 +214,12 @@ def reextract_receipt(receipt_id: str, lidl_client=None) -> bool:
     """Re-run extraction for a receipt from its source and replace its items.
 
     Used to apply improved parsing to receipts imported by an earlier build.
-    Settled receipts and manual entries (no live source) are left untouched.
+    Only pending receipts are touched — settled/dismissed ones are final until
+    reopened — and manual entries have no live source to re-fetch.
     Returns True if the receipt's items were refreshed.
     """
     receipt = db.get_receipt(receipt_id)
-    if not receipt or receipt.status == "settled":
+    if not receipt or receipt.status != "pending":
         return False
 
     source_ref = receipt.external_id.split(":", 1)
@@ -227,7 +230,10 @@ def reextract_receipt(receipt_id: str, lidl_client=None) -> bool:
     if receipt.source == "rewe":
         text = paperless.get_document_text(int(ref))
         items = extraction.extract_rewe_items(text, known_items=db.get_known_items())
-        db.replace_items(receipt_id, _items_to_rows(items))
+        total = extraction.extract_rewe_total(text)
+        if total is None:
+            total = sum(i.total_price for i in items)
+        db.replace_items(receipt_id, _items_to_rows(items), total_amount=total)
         return True
 
     if receipt.source == "lidl":
@@ -239,7 +245,8 @@ def reextract_receipt(receipt_id: str, lidl_client=None) -> bool:
         finally:
             if lidl_client is None:
                 client.close()
-        db.replace_items(receipt_id, _items_to_rows(parsed.items))
+        db.replace_items(receipt_id, _items_to_rows(parsed.items),
+                         total_amount=parsed.total_amount)
         return True
 
     return False  # manual receipts have no source to re-fetch
@@ -255,7 +262,7 @@ def reextract_all() -> tuple[int, int]:
     receipts = db.list_receipts()
     lidl_client = None
     if lidl.is_configured() and any(
-        r.source == "lidl" and r.status != "settled" for r in receipts
+        r.source == "lidl" and r.status == "pending" for r in receipts
     ):
         try:
             lidl_client = lidl.open_client()
@@ -280,13 +287,26 @@ def reextract_all() -> tuple[int, int]:
 
 # --- Settlement (shared by the web UI and the Telegram bot) ------------------
 
+def _after_change(receipt_id: str, outcome: str = "") -> None:
+    """Mirror a state change into the receipt's Telegram message (if any)."""
+    notifier.update_receipt_message(db.get_receipt(receipt_id), outcome)
+
+
 def settle_receipt(receipt_id: str) -> tuple[bool, str]:
     """Create a Spliit expense for a receipt's currently-included items.
 
     Returns (ok, message). Idempotent: a receipt already settled is not settled
-    again, so a repeated trigger (e.g. a stale Telegram button press) never
-    creates a duplicate expense.
+    again, so a repeated trigger (e.g. a stale Telegram button press or a
+    double-clicked button) never creates a duplicate expense.
     """
+    with _state_lock:
+        ok, message = _settle_receipt(receipt_id)
+    if ok:
+        _after_change(receipt_id, message)
+    return ok, message
+
+
+def _settle_receipt(receipt_id: str) -> tuple[bool, str]:
     receipt = db.get_receipt(receipt_id)
     if not receipt:
         return False, "Receipt not found."
@@ -343,6 +363,14 @@ def settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
     unassigned); the per-person sums become the expense's amounts. Idempotent
     like :func:`settle_receipt`.
     """
+    with _state_lock:
+        ok, message = _settle_receipt_advanced(receipt_id)
+    if ok:
+        _after_change(receipt_id, message)
+    return ok, message
+
+
+def _settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
     receipt = db.get_receipt(receipt_id)
     if not receipt:
         return False, "Receipt not found."
@@ -394,23 +422,43 @@ def dismiss_receipt(receipt_id: str) -> tuple[bool, str]:
     Like deselecting every item: the receipt leaves 'pending' without creating
     an expense. Idempotent and only applies to pending receipts.
     """
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        return False, "Receipt not found."
-    if receipt.status == "dismissed":
-        return False, "Already dismissed."
-    if receipt.status != "pending":
-        return False, f"Receipt is already {receipt.status}."
-    db.set_status(receipt_id, "dismissed")
+    with _state_lock:
+        receipt = db.get_receipt(receipt_id)
+        if not receipt:
+            return False, "Receipt not found."
+        if receipt.status == "dismissed":
+            return False, "Already dismissed."
+        if receipt.status != "pending":
+            return False, f"Receipt is already {receipt.status}."
+        db.set_status(receipt_id, "dismissed")
+    _after_change(receipt_id)
     return True, "Dismissed — nothing shared."
 
 
 def reopen_receipt(receipt_id: str) -> tuple[bool, str]:
-    """Return a dismissed receipt to 'pending' so it can be handled again."""
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        return False, "Receipt not found."
-    if receipt.status != "dismissed":
-        return False, "Only dismissed receipts can be reopened."
-    db.set_status(receipt_id, "pending")
+    """Return a dismissed receipt to 'pending' so it can be handled again.
+
+    Its Telegram message gets its Approve / Review / Dismiss buttons back.
+    """
+    with _state_lock:
+        receipt = db.get_receipt(receipt_id)
+        if not receipt:
+            return False, "Receipt not found."
+        if receipt.status != "dismissed":
+            return False, "Only dismissed receipts can be reopened."
+        db.set_status(receipt_id, "pending")
+    _after_change(receipt_id)
     return True, "Reopened."
+
+
+def delete_receipt(receipt_id: str) -> Optional[str]:
+    """Delete a receipt; its Telegram message is marked deleted (buttons gone).
+
+    Returns the deleted receipt's external_id, or ``None`` if it didn't exist.
+    """
+    with _state_lock:
+        receipt = db.get_receipt(receipt_id)
+        external_id = db.delete_receipt(receipt_id)
+    if external_id is not None:
+        notifier.update_receipt_message(receipt, deleted=True)
+    return external_id

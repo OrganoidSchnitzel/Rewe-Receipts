@@ -2,9 +2,10 @@
 
 A daemon thread calls ``getUpdates`` (long poll) — no inbound webhook or exposed
 port needed, so it works behind a home NAT. Only callback presses coming from
-the configured ``TELEGRAM_CHAT_ID`` are honored. The "Approve & split" button
-settles the receipt (creates the Spliit expense for its included items); the
-action is idempotent, so a stale press on an already-settled receipt is a no-op.
+the configured ``TELEGRAM_CHAT_ID`` are honored. "Approve & split" settles the
+receipt (creates the Spliit expense for its included items) and "Dismiss" marks
+it handled with nothing shared; both are idempotent, so a stale press on an
+already-handled receipt changes nothing and just refreshes the message.
 """
 from __future__ import annotations
 
@@ -77,15 +78,21 @@ def _handle_update(update: dict) -> None:
         notifier.answer_callback(callback["id"], "")
         return
 
-    from . import ingest  # lazy import avoids a circular import at module load
+    from . import db, ingest  # lazy import avoids a circular import at module load
+
+    # Notifications sent before message ids were stored: link this message to
+    # its receipt now, so it is updated like any other from here on.
+    receipt = db.get_receipt(receipt_id)
+    if receipt and not receipt.telegram_message_id and message.get("message_id"):
+        db.set_telegram_message(receipt_id, message["message_id"])
 
     if action == "approve":
         ok, result = ingest.settle_receipt(receipt_id)
-        confirm = f"✅ {notifier._esc(result)}"
     else:  # dismiss
         ok, result = ingest.dismiss_receipt(receipt_id)
-        confirm = f"🚫 {notifier._esc(result)}"
 
+    # On success ingest has already re-rendered the message. On a stale press
+    # (e.g. settled in the web UI meanwhile) refresh it to the current state.
     notifier.answer_callback(callback["id"], result)
-    if ok and message.get("message_id"):
-        notifier.edit_message(chat["id"], message["message_id"], confirm)
+    if not ok:
+        notifier.update_receipt_message(db.get_receipt(receipt_id))

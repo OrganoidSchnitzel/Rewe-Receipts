@@ -40,9 +40,10 @@ class Receipt:
     store: str
     file_path: Optional[str]
     total_amount: float
-    status: str  # "pending" | "settled"
+    status: str  # "pending" | "settled" | "dismissed"
     spliit_expense_id: Optional[str]
     created_at: str
+    telegram_message_id: Optional[int] = None
     item_count: int = 0
     items: list["ReceiptItemRow"] = field(default_factory=list)
 

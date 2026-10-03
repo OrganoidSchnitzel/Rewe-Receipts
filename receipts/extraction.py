@@ -244,6 +244,21 @@ def parse_rewe_line(line: str) -> Optional[ExtractedItem]:
     )
 
 
+def extract_rewe_total(receipt_text: str) -> Optional[float]:
+    """The printed receipt total from the SUMME / "zu zahlen" line, if found.
+
+    Stored as the receipt total so the review UI can flag when the extracted
+    items don't add up to it (i.e. a line was missed or misread).
+    """
+    for raw_line in receipt_text.splitlines():
+        lowered = raw_line.strip().lower()
+        if lowered.startswith(("summe", "gesamt", "zu zahlen")):
+            prices = PRICE_REGEX.findall(raw_line)
+            if prices:
+                return abs(float(prices[-1].replace(",", ".")))
+    return None
+
+
 def extract_rewe_items(
     receipt_text: str,
     known_items: Optional[dict[str, dict]] = None,

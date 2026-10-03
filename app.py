@@ -73,6 +73,19 @@ def _parse_items_from_form() -> list[dict]:
     return items
 
 
+def _blocked_unless_pending(receipt_id: str):
+    """Guard for write actions: 404 if missing; a redirect back to the detail
+    page if it's no longer pending (settled / dismissed are read-only, so a
+    stale form or a second click can't change them). ``None`` means proceed."""
+    receipt = db.get_receipt(receipt_id)
+    if not receipt:
+        abort(404)
+    if receipt.status != "pending":
+        flash(f"This receipt is {receipt.status} and read-only; nothing changed.")
+        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    return None
+
+
 # --- receipt list / detail ---------------------------------------------------
 
 @app.get("/")
@@ -104,12 +117,9 @@ def receipt_file(receipt_id: str):
 
 @app.post("/receipts/<receipt_id>/reextract")
 def reextract_receipt(receipt_id: str):
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        abort(404)
-    if receipt.status == "settled":
-        flash("Settled receipts are read-only and can't be re-extracted.")
-        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    blocked = _blocked_unless_pending(receipt_id)
+    if blocked:
+        return blocked
     try:
         ok = ingest.reextract_receipt(receipt_id)
     except Exception as exc:
@@ -141,7 +151,7 @@ def reopen_receipt(receipt_id: str):
 
 @app.post("/receipts/<receipt_id>/delete")
 def delete_receipt(receipt_id: str):
-    external_id = db.delete_receipt(receipt_id)
+    external_id = ingest.delete_receipt(receipt_id)
     if external_id is None:
         abort(404)
     flash(
@@ -153,9 +163,9 @@ def delete_receipt(receipt_id: str):
 
 @app.post("/receipts/<receipt_id>/save")
 def save_receipt(receipt_id: str):
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        abort(404)
+    blocked = _blocked_unless_pending(receipt_id)
+    if blocked:
+        return blocked
     items = _parse_items_from_form()
     db.replace_items(receipt_id, items)
     flash("Saved.")
@@ -164,12 +174,9 @@ def save_receipt(receipt_id: str):
 
 @app.post("/receipts/<receipt_id>/spliit")
 def create_spliit_expense(receipt_id: str):
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        abort(404)
-    if receipt.status == "settled":
-        flash("Receipt is already settled; not creating a duplicate expense.")
-        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    blocked = _blocked_unless_pending(receipt_id)
+    if blocked:
+        return blocked
 
     # Persist any last edits/selection from the form first.
     items = _parse_items_from_form()
@@ -187,12 +194,9 @@ def create_spliit_expense(receipt_id: str):
 
 @app.post("/receipts/<receipt_id>/spliit-advanced")
 def create_spliit_expense_advanced(receipt_id: str):
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        abort(404)
-    if receipt.status == "settled":
-        flash("Receipt is already settled; not creating a duplicate expense.")
-        return redirect(url_for("receipt_detail", receipt_id=receipt_id))
+    blocked = _blocked_unless_pending(receipt_id)
+    if blocked:
+        return blocked
 
     items = _parse_items_from_form()
     if items:
