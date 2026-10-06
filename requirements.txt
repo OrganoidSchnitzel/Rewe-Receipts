@@ -1,3 +1,10 @@
 Flask==3.0.3
 pypdf==4.2.0
 requests==2.32.3
+# Lidl Plus API client. Base install needs only `requests`; the heavy auth
+# extras (selenium etc.) are used only by the one-time `lidl-plus auth` CLI you
+# run outside the container to obtain LIDL_REFRESH_TOKEN.
+lidl-plus==0.3.5
+# HTTP/2 client for the Lidl ticket calls. Lidl's Envoy gateway hangs plain
+# HTTP/1.1 (all `requests` speaks); httpx negotiates HTTP/2 like the real app.
+httpx[http2]==0.27.2
