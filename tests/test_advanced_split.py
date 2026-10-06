@@ -41,6 +41,48 @@ class ApportionTests(unittest.TestCase):
         c = compute_participant_cents(items, ["a", "b"])
         self.assertEqual(78 + 339 + 341, c["a"] + c["b"])
 
+    # The REWE receipt from 06.10.2026: 21 items, 17 with an odd-cent price.
+    REWE_0610 = [2.89, 1.65, 2.29, 2.29, 2.49, 1.49, 1.41, 1.99, 1.60, 1.99, 6.58,
+                 1.35, 0.99, 2.58, 0.89, 1.58, 3.49, 1.49, 0.55, 1.39, 4.99]
+
+    def test_even_split_does_not_drift_on_many_odd_cent_items(self) -> None:
+        # Regression: per-item rounding gave every odd cent to the first person
+        # (Tobi €23.07 / Chiara €22.90 instead of €22.99 / €22.98).
+        items = [_item(p, ["a", "b"]) for p in self.REWE_0610]
+        c = compute_participant_cents(items, ["a", "b"])
+        self.assertEqual(4597, c["a"] + c["b"])
+        self.assertEqual({2299, 2298}, {c["a"], c["b"]})
+
+    def test_unassigned_items_split_evenly_too(self) -> None:
+        items = [_item(p, []) for p in self.REWE_0610]
+        c = compute_participant_cents(items, ["a", "b"])
+        self.assertEqual({2299, 2298}, {c["a"], c["b"]})
+
+    def test_three_way_split_is_within_a_cent(self) -> None:
+        items = [_item(p, []) for p in self.REWE_0610]
+        c = compute_participant_cents(items, ["a", "b", "c"])
+        self.assertEqual(4597, sum(c.values()))
+        self.assertLessEqual(max(c.values()) - min(c.values()), 1)
+
+    def test_mixed_two_and_three_way_items(self) -> None:
+        items = [_item(1.00, ["a", "b", "c"]), _item(0.01, ["a", "b"]), _item(2.00, ["c"])]
+        c = compute_participant_cents(items, ["a", "b", "c"])
+        self.assertEqual(301, sum(c.values()))
+        # exact: a = b = 33.83…, c = 233.33… -> c keeps its 2.00 + a third
+        self.assertEqual(233, c["c"])
+        self.assertEqual({34, 34}, {c["a"], c["b"]})
+
+    def test_negative_line_still_sums_exactly(self) -> None:
+        # e.g. a Pfand return or discount line
+        items = [_item(3.01, ["a", "b"]), _item(-0.25, ["a", "b"]), _item(1.99, ["a"])]
+        c = compute_participant_cents(items, ["a", "b"])
+        self.assertEqual(301 - 25 + 199, c["a"] + c["b"])
+        self.assertEqual(138 + 199, c["a"])  # (301 - 25) / 2 = 138 each, + 1.99
+
+    def test_duplicate_assignee_counted_once(self) -> None:
+        c = compute_participant_cents([_item(1.00, ["a", "a", "b"])], ["a", "b"])
+        self.assertEqual({"a": 50, "b": 50}, c)
+
 
 class ByAmountPayloadTests(unittest.TestCase):
     def test_shape_and_amount(self) -> None:

@@ -217,19 +217,33 @@
       // --- advanced per-person summary (mirrors server apportionment) ---
       function recalcSummary() {
         if (!participants) return;
-        const totals = {}; participants.forEach(p => totals[p.id] = 0);
+        // Mirrors ingest.compute_participant_cents: accumulate exact shares
+        // (in 1/scale cents) over the whole receipt, round once at the end,
+        // and hand the leftover cents to whoever lost most to rounding.
+        const gcd = (a, b) => { while (b) { [a, b] = [b, a % b]; } return a; };
+        let scale = 1;
+        for (let i = 2; i <= participants.length; i++) scale = scale * i / gcd(scale, i);
+        const units = {}; participants.forEach(p => units[p.id] = 0);
+        let total = 0;
         rows().forEach(function (row) {
           const cb = row.querySelector('.include-cb');
           const price = row.querySelector('.price');
           if (!cb || !cb.checked || !price) return;
           const cents = Math.round((parseFloat(price.value) || 0) * 100);
-          let ids = Array.from(row.querySelectorAll('.chip-cb:checked')).map(c => c.value);
+          total += cents;
+          let ids = [...new Set(Array.from(row.querySelectorAll('.chip-cb:checked')).map(c => c.value))];
           if (!ids.length) ids = participants.map(p => p.id);
-          const k = ids.length;
-          const base = Math.trunc(cents / k);
-          let rem = cents - base * k;   // works for negatives too
-          ids.forEach(function (pid, i) { totals[pid] += base + (i < rem ? 1 : 0); });
+          const share = cents * scale / ids.length;   // exact: scale is divisible by k
+          ids.forEach(pid => { units[pid] += share; });
         });
+        const totals = {};
+        participants.forEach(p => { totals[p.id] = Math.floor(units[p.id] / scale); });
+        let leftover = total - participants.reduce((s, p) => s + totals[p.id], 0);
+        participants
+          .map((p, i) => ({ id: p.id, i: i, loss: units[p.id] - totals[p.id] * scale }))
+          .sort((a, b) => b.loss - a.loss || a.i - b.i)
+          .slice(0, leftover)
+          .forEach(x => { totals[x.id] += 1; });
         summaryEl.innerHTML = participants
           .map((p, i) => [p, i])
           .filter(([p]) => totals[p.id] !== 0)

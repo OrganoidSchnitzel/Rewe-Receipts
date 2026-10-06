@@ -11,6 +11,7 @@ Both trigger paths (webhook push, polling fallback) funnel through
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Optional
 
@@ -340,19 +341,39 @@ def _settle_receipt(receipt_id: str) -> tuple[bool, str]:
 def compute_participant_cents(items, all_ids: list[str]) -> dict[str, int]:
     """Split each item's cents among its assignees (or everyone if unassigned).
 
-    Pure and exact: an item split k ways gives ``cents // k`` to each, with the
-    remainder distributed one cent at a time, so per-person totals sum exactly
-    to the sum of the items' cents. Assignees not in the current group are
-    ignored; an item with no valid assignee falls back to an even split.
+    Exact and fair: every person's share is accumulated exactly (fractions of a
+    cent included) across the whole receipt and only rounded once at the end.
+    The leftover cents go to whoever lost the most to rounding (ties: group
+    order), so totals sum exactly to the items' cents and an even split never
+    drifts by more than one cent. (Rounding per item instead hands every odd
+    cent to the same person — 17 cents on a 21-item receipt.)
+
+    Assignees not in the current group are ignored; an item with no valid
+    assignee falls back to an even split.
     """
-    totals = {pid: 0 for pid in all_ids}
+    if not all_ids:
+        return {}
+    # Common denominator for any k-way split, so shares stay integers.
+    scale = math.lcm(*range(1, len(all_ids) + 1))
+    units = {pid: 0 for pid in all_ids}  # in 1/scale cents
+    total = 0
     for item in items:
         cents = round(item.total_price * 100)
-        assignees = [a for a in (item.assignees or []) if a in totals] or list(all_ids)
-        k = len(assignees)
-        base, remainder = divmod(cents, k)
-        for index, pid in enumerate(assignees):
-            totals[pid] += base + (1 if index < remainder else 0)
+        total += cents
+        assignees = list(dict.fromkeys(
+            a for a in (item.assignees or []) if a in units
+        )) or list(all_ids)
+        share = cents * scale // len(assignees)  # exact: scale is divisible by k
+        for pid in assignees:
+            units[pid] += share
+
+    totals = {pid: u // scale for pid, u in units.items()}
+    leftover = total - sum(totals.values())  # 0 <= leftover < len(all_ids)
+    by_rounding_loss = sorted(
+        all_ids, key=lambda pid: (-(units[pid] % scale), all_ids.index(pid))
+    )
+    for pid in by_rounding_loss[:leftover]:
+        totals[pid] += 1
     return totals
 
 
