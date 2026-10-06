@@ -99,7 +99,7 @@ docker compose up -d
 
 | Button | Action |
 |--------|--------|
-| **✅ Approve & split** | Creates the Spliit expense for all of the receipt's included items, with your default split (you as payer, even split), and marks it settled. |
+| **✅ Approve & split** | Creates the Spliit expense for the receipt's included items (you as payer) and marks it settled. It uses the per-person split if you've assigned items to people in the web UI (and saved), otherwise an even split. |
 | **✏️ Review** | Opens the receipt in the web UI so you can tick/untick or correct items before creating the expense. |
 | **🚫 Dismiss (nothing to share)** | Marks the receipt handled without creating any expense (the same as deselecting every item). It leaves "pending" and no Spliit expense is made. Reversible: reopen it from the web UI. |
 

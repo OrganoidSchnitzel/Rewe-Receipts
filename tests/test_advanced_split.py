@@ -157,7 +157,7 @@ class SettleAdvancedTests(unittest.TestCase):
              mock.patch.object(self.ingest.spliit, "resolve_payer", return_value=parts[0]), \
              mock.patch.object(self.ingest.spliit, "create_expense_by_amounts",
                                return_value="exp_1") as ce:
-            ok, msg = self.ingest.settle_receipt_advanced(rid)
+            ok, msg = self.ingest.settle_receipt(rid)
 
         self.assertTrue(ok)
         # A(100)->alice, B(100) split -> alice 50 / bob 50  => alice 150, bob 50
@@ -167,6 +167,53 @@ class SettleAdvancedTests(unittest.TestCase):
         self.assertIn("Alice €1.50", msg)
         self.assertIn("Bob €0.50", msg)
         self.assertEqual("settled", self.db.get_receipt(rid).status)
+
+    def test_saved_assignments_drive_the_one_settle(self) -> None:
+        # The single "Create Spliit expense" button (and Telegram's Approve)
+        # must use the saved per-item assignments, not a 50/50 split.
+        rid = self._receipt_with_assignments()
+        parts = [spliit.Participant("p_alice", "Alice"), spliit.Participant("p_bob", "Bob")]
+        with mock.patch.object(self.ingest.spliit, "get_participants", return_value=parts), \
+             mock.patch.object(self.ingest.spliit, "resolve_payer", return_value=parts[0]), \
+             mock.patch.object(self.ingest.spliit, "create_expense") as even, \
+             mock.patch.object(self.ingest.spliit, "create_expense_by_amounts",
+                               return_value="exp_1") as by_amount:
+            ok, _ = self.ingest.settle_receipt(rid)
+        self.assertTrue(ok)
+        even.assert_not_called()
+        by_amount.assert_called_once()
+
+    def test_no_assignments_is_an_even_split(self) -> None:
+        rid = self.db.create_receipt(
+            source="lidl", external_id="lidl:t2", store="Lidl", total_amount=2.00,
+            items=[ExtractedItem(name="A", total_price=1.00),
+                   ExtractedItem(name="B", total_price=1.00)],
+        )
+        with mock.patch.object(self.ingest.spliit, "get_participants") as gp, \
+             mock.patch.object(self.ingest.spliit, "create_expense", return_value="e") as even, \
+             mock.patch.object(self.ingest.spliit, "create_expense_by_amounts") as by_amount:
+            ok, _ = self.ingest.settle_receipt(rid)
+        self.assertTrue(ok)
+        even.assert_called_once()
+        by_amount.assert_not_called()
+        gp.assert_not_called()  # no need to ask Spliit who's in the group
+
+    def test_everyone_on_every_item_is_an_even_split(self) -> None:
+        # Opening the advanced view ticks everyone on every item; saving that
+        # unchanged must still give Spliit's plain "Evenly" expense.
+        rid = self._receipt_with_assignments()
+        self.db.replace_items(rid, [
+            {"name": n, "total_price": 1.0, "included": True,
+             "assignees": ["p_alice", "p_bob"]} for n in ("A", "B")
+        ])
+        parts = [spliit.Participant("p_alice", "Alice"), spliit.Participant("p_bob", "Bob")]
+        with mock.patch.object(self.ingest.spliit, "get_participants", return_value=parts), \
+             mock.patch.object(self.ingest.spliit, "create_expense", return_value="e") as even, \
+             mock.patch.object(self.ingest.spliit, "create_expense_by_amounts") as by_amount:
+            ok, _ = self.ingest.settle_receipt(rid)
+        self.assertTrue(ok)
+        even.assert_called_once()
+        by_amount.assert_not_called()
 
     def test_assignees_persist_through_reload(self) -> None:
         rid = self._receipt_with_assignments()
@@ -181,8 +228,8 @@ class SettleAdvancedTests(unittest.TestCase):
              mock.patch.object(self.ingest.spliit, "resolve_payer", return_value=parts[0]), \
              mock.patch.object(self.ingest.spliit, "create_expense_by_amounts",
                                return_value="exp_1") as ce:
-            self.ingest.settle_receipt_advanced(rid)
-            ok, msg = self.ingest.settle_receipt_advanced(rid)
+            self.ingest.settle_receipt(rid)
+            ok, msg = self.ingest.settle_receipt(rid)
         self.assertFalse(ok)
         self.assertIn("already settled", msg)
         ce.assert_called_once()

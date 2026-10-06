@@ -296,6 +296,11 @@ def _after_change(receipt_id: str, outcome: str = "") -> None:
 def settle_receipt(receipt_id: str) -> tuple[bool, str]:
     """Create a Spliit expense for a receipt's currently-included items.
 
+    The one way to settle, used by the web UI and Telegram's Approve alike, so
+    the expense always matches what the review page shows: if any item is
+    assigned to specific people, each person owes the sum of their items
+    (BY_AMOUNT); otherwise the total is split evenly.
+
     Returns (ok, message). Idempotent: a receipt already settled is not settled
     again, so a repeated trigger (e.g. a stale Telegram button press or a
     double-clicked button) never creates a duplicate expense.
@@ -317,15 +322,23 @@ def _settle_receipt(receipt_id: str) -> tuple[bool, str]:
     included = [i for i in receipt.items if i.included]
     if not included:
         return False, "No items selected."
+    if any(i.assignees for i in included):
+        return _settle_by_assignment(receipt, included)
+    return _settle_evenly(receipt, included)
+
+
+def _expense_title(receipt) -> str:
+    date_part = (receipt.purchase_date or "")[:10]
+    return f"{receipt.store or receipt.source.upper()} {date_part}".strip() or "Receipt"
+
+
+def _settle_evenly(receipt, included) -> tuple[bool, str]:
     total = round(sum(i.total_price for i in included), 2)
     if total <= 0:
         return False, "Selected total must be positive."
-
-    date_part = (receipt.purchase_date or "")[:10]
-    title = f"{receipt.store or receipt.source.upper()} {date_part}".strip()
     try:
         expense_id = spliit.create_expense(
-            title=title or "Receipt",
+            title=_expense_title(receipt),
             amount_eur=total,
             notes=f"{len(included)} items imported from {receipt.source} receipt",
             expense_date=receipt.purchase_date,
@@ -334,7 +347,7 @@ def _settle_receipt(receipt_id: str) -> tuple[bool, str]:
         logger.exception("Spliit expense creation failed")
         return False, f"Spliit error: {exc}"
 
-    db.mark_settled(receipt_id, expense_id)
+    db.mark_settled(receipt.id, expense_id)
     return True, f"Created Spliit expense for €{total:.2f}."
 
 
@@ -377,31 +390,13 @@ def compute_participant_cents(items, all_ids: list[str]) -> dict[str, int]:
     return totals
 
 
-def settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
-    """Create a per-person (BY_AMOUNT) Spliit expense from item assignments.
+def _settle_by_assignment(receipt, included) -> tuple[bool, str]:
+    """Per-person (BY_AMOUNT) expense from the items' assignees.
 
     Each included item is split among its assigned participants (or everyone if
-    unassigned); the per-person sums become the expense's amounts. Idempotent
-    like :func:`settle_receipt`.
+    unassigned); the per-person sums become the expense's amounts. If every
+    item turns out to be shared by everyone, it's an ordinary even split.
     """
-    with _state_lock:
-        ok, message = _settle_receipt_advanced(receipt_id)
-    if ok:
-        _after_change(receipt_id, message)
-    return ok, message
-
-
-def _settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
-    receipt = db.get_receipt(receipt_id)
-    if not receipt:
-        return False, "Receipt not found."
-    if receipt.status != "pending":
-        return False, f"Receipt is already {receipt.status}."
-
-    included = [i for i in receipt.items if i.included]
-    if not included:
-        return False, "No items selected."
-
     try:
         participants = spliit.get_participants()
     except Exception as exc:
@@ -409,27 +404,29 @@ def _settle_receipt_advanced(receipt_id: str) -> tuple[bool, str]:
     if not participants:
         return False, "Spliit group has no participants."
 
+    all_ids = [p.id for p in participants]
+    if all(set(i.assignees or all_ids) >= set(all_ids) for i in included):
+        return _settle_evenly(receipt, included)
+
     name_by_id = {p.id: p.name for p in participants}
-    cents = compute_participant_cents(included, [p.id for p in participants])
+    cents = compute_participant_cents(included, all_ids)
     if sum(c for c in cents.values() if c > 0) <= 0:
         return False, "Selected total must be positive."
 
-    date_part = (receipt.purchase_date or "")[:10]
-    title = f"{receipt.store or receipt.source.upper()} {date_part}".strip()
     try:
         payer = spliit.resolve_payer(participants)
         expense_id = spliit.create_expense_by_amounts(
-            title=title or "Receipt",
+            title=_expense_title(receipt),
             participant_cents=cents,
             payer_id=payer.id,
             notes=f"{len(included)} items, per-person split",
             expense_date=receipt.purchase_date,
         )
     except Exception as exc:
-        logger.exception("Spliit advanced expense creation failed")
+        logger.exception("Spliit per-person expense creation failed")
         return False, f"Spliit error: {exc}"
 
-    db.mark_settled(receipt_id, expense_id)
+    db.mark_settled(receipt.id, expense_id)
     breakdown = ", ".join(
         f"{name_by_id.get(pid, pid)} €{c / 100:.2f}"
         for pid, c in cents.items() if c > 0
