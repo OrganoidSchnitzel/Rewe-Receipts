@@ -128,10 +128,6 @@
                       formaction="{{ url_for('create_spliit_expense', receipt_id=receipt.id) }}">
                 Create Spliit expense
               </button>
-              <button type="submit" class="btn btn-primary" id="spliit-adv-btn" hidden
-                      formaction="{{ url_for('create_spliit_expense_advanced', receipt_id=receipt.id) }}">
-                Create split expense
-              </button>
             </div>
           {% elif receipt.status == 'dismissed' %}
             <span class="state-note state-dismissed">🚫 Dismissed · nothing shared</span>
@@ -174,7 +170,6 @@
       const warnEl = document.getElementById('total-warning');
       const summaryEl = document.getElementById('assign-summary');
       const spliitBtn = document.getElementById('spliit-btn');
-      const advBtn = document.getElementById('spliit-adv-btn');
       const advToggle = document.getElementById('advanced-toggle');
       const selectAll = document.getElementById('select-all');
       const receiptTotal = parseFloat(form.querySelector('[name="receipt_total"]').value) || 0;
@@ -197,7 +192,6 @@
         countEl.textContent = count;
         const enable = count > 0;
         if (spliitBtn) spliitBtn.disabled = !enable;
-        if (advBtn) advBtn.disabled = !enable;
 
         const diff = Math.abs(total - receiptTotal);
         if (receiptTotal > 0 && diff > 0.005) {
@@ -287,29 +281,33 @@
         panel.dataset.advanced = on ? '1' : '0';
         advToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
         form.querySelectorAll('.assignees').forEach(b => b.hidden = !on);
+        // What you see is what gets sent: with the advanced split off, the
+        // assignments are not submitted, so everyone shares everything.
+        form.querySelectorAll('.chip-cb').forEach(cb => cb.disabled = !on);
         summaryEl.hidden = !on;
-        if (spliitBtn) spliitBtn.hidden = on;
-        if (advBtn) advBtn.hidden = !on;
         if (on) recalcSummary();
+      }
+
+      function openAdvanced() {
+        if (participants) { setAdvanced(true); return; }
+        advToggle.disabled = true;
+        fetch('{{ url_for('api_participants') }}')
+          .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || 'error')))
+          .then(function (data) { participants = data; buildChips(); setAdvanced(true); })
+          .catch(function (err) {
+            warnEl.hidden = false;
+            warnEl.textContent = 'Could not load people from Spliit: ' + err;
+          })
+          .finally(function () { advToggle.disabled = false; });
       }
 
       if (advToggle) {
         advToggle.addEventListener('click', function () {
-          const turnOn = !isAdvanced();
-          if (turnOn && !participants) {
-            advToggle.disabled = true;
-            fetch('{{ url_for('api_participants') }}')
-              .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || 'error')))
-              .then(function (data) { participants = data; buildChips(); setAdvanced(true); })
-              .catch(function (err) {
-                warnEl.hidden = false;
-                warnEl.textContent = 'Could not load people from Spliit: ' + err;
-              })
-              .finally(function () { advToggle.disabled = false; });
-          } else {
-            setAdvanced(turnOn);
-          }
+          if (isAdvanced()) setAdvanced(false); else openAdvanced();
         });
+        // Saved assignments (e.g. after Save) reopen the split view, so the
+        // page always shows the split that "Create Spliit expense" will send.
+        if (form.querySelector('.assignee-store')) openAdvanced();
       }
 
       if (selectAll) {

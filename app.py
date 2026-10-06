@@ -173,12 +173,15 @@ def save_receipt(receipt_id: str):
 
 
 @app.post("/receipts/<receipt_id>/spliit")
+# Old pages posted the per-person split here; settling now picks the split
+# from the items' assignments itself, so both URLs do the same thing.
+@app.post("/receipts/<receipt_id>/spliit-advanced")
 def create_spliit_expense(receipt_id: str):
     blocked = _blocked_unless_pending(receipt_id)
     if blocked:
         return blocked
 
-    # Persist any last edits/selection from the form first.
+    # Persist any last edits/selection/assignments from the form first.
     items = _parse_items_from_form()
     if items:
         db.replace_items(receipt_id, items)
@@ -188,22 +191,6 @@ def create_spliit_expense(receipt_id: str):
     _learn_from_form(items)
 
     ok, message = ingest.settle_receipt(receipt_id)
-    flash(message)
-    return redirect(url_for("receipt_detail", receipt_id=receipt_id))
-
-
-@app.post("/receipts/<receipt_id>/spliit-advanced")
-def create_spliit_expense_advanced(receipt_id: str):
-    blocked = _blocked_unless_pending(receipt_id)
-    if blocked:
-        return blocked
-
-    items = _parse_items_from_form()
-    if items:
-        db.replace_items(receipt_id, items)
-    _learn_from_form(items)
-
-    ok, message = ingest.settle_receipt_advanced(receipt_id)
     flash(message)
     return redirect(url_for("receipt_detail", receipt_id=receipt_id))
 

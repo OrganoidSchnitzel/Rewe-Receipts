@@ -64,6 +64,46 @@ class ReadOnlyGuardTests(AppTestCase):
         self.assertTrue(update.call_args.kwargs["deleted"])
 
 
+class CreateExpenseRouteTests(AppTestCase):
+    """The one "Create Spliit expense" button sends the split the page shows."""
+
+    def _post(self, url, assignees=None):
+        form = {"item_count": "2", "included": ["0", "1"],
+                "name_0": "MILCH", "quantity_0": "1", "total_price_0": "1.29",
+                "name_1": "AKKU", "quantity_1": "1", "total_price_1": "4.99"}
+        if assignees:
+            form.update(assignees)
+        from receipts import spliit
+        parts = [spliit.Participant("p1", "Tobi"), spliit.Participant("p2", "Chiara")]
+        with mock.patch.object(spliit, "get_participants", return_value=parts), \
+             mock.patch.object(spliit, "resolve_payer", return_value=parts[0]), \
+             mock.patch.object(spliit, "create_expense", return_value="e") as even, \
+             mock.patch.object(spliit, "create_expense_by_amounts", return_value="e") as by_amount:
+            self.client.post(url, data=form)
+        return even, by_amount
+
+    def test_assignments_in_the_form_give_per_person_amounts(self) -> None:
+        even, by_amount = self._post(f"/receipts/{self.rid}/spliit", {
+            "assignees_0": ["p1", "p2"], "assignees_1": ["p1"],  # Akku: Tobi only
+        })
+        even.assert_not_called()
+        # Milch 1.29 shared (65/64), Akku 4.99 Tobi only
+        self.assertEqual({"p1": 65 + 499, "p2": 64},
+                         by_amount.call_args.kwargs["participant_cents"])
+
+    def test_no_assignments_in_the_form_is_even(self) -> None:
+        even, by_amount = self._post(f"/receipts/{self.rid}/spliit")
+        even.assert_called_once()
+        by_amount.assert_not_called()
+
+    def test_old_advanced_url_still_works(self) -> None:
+        even, by_amount = self._post(f"/receipts/{self.rid}/spliit-advanced", {
+            "assignees_0": ["p1"], "assignees_1": ["p2"],
+        })
+        self.assertEqual({"p1": 129, "p2": 499},
+                         by_amount.call_args.kwargs["participant_cents"])
+
+
 class ReweIngestTotalTests(AppTestCase):
     def test_printed_summe_becomes_the_receipt_total(self) -> None:
         from receipts import ingest
